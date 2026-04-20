@@ -2,67 +2,76 @@
 
 Termux scripts and tooling for Nothing Phone 2a (rooted, unlocked bootloader).
 
-Offline voice control for alarms, app launching, and YouTube search — all powered by whisper.cpp running locally on-device. No internet needed after setup, no Google STT dependency.
+Offline voice control for alarms, app launching, YouTube search, system toggles, screenshots, notes, and notifications — all powered by whisper.cpp running locally on-device. No internet needed after setup, no Google STT dependency.
 
 ## Scripts
+
+### `voice` (unified router)
+Single entry point for all voice commands. Listens once via `whisper-listen 5`, then routes based on keywords:
+- "alarm / wake me / set alarm" → `voice-alarm`
+- "open / launch / start [app]" → `voice-open`
+- "youtube / play video" → `voice-youtube`
+- "screenshot" → `voice-screenshot`
+- "wifi / bluetooth / data / airplane / flashlight + on/off" → `voice-toggle`
+- "read notifications / whatsapp" → `voice-read-notif`
+- "note / remember / write down" → `voice-note`
+- "search note / find note" → `voice-note-search`
+- "list notes / show notes" → `voice-note-list`
+
+All sub-scripts accept pre-captured text as `$1` so the router doesn't re-listen.
 
 ### `voice-alarm`
 Voice-controlled alarm setter. Captures speech via `whisper-listen`, parses with Python, and sets an alarm in the stock Clock app via `android.intent.action.SET_ALARM`.
 
-Handles phrases like:
-- "wake me at 7 AM"
-- "set alarm for 6:30"
-- "set the alarm for 8am tomorrow"
-- "seven thirty am"
-
-Retries up to 3 times. Fast-fails cleanly when speech is unparseable.
+Handles phrases like: "wake me at 7 AM", "set alarm for 6:30", "seven thirty am". Retries up to 3 times.
 
 ### `voice-open`
 Voice-controlled app launcher. Say an app name (e.g., "WhatsApp", "YouTube") and it launches via `am start`. Supports substring matching — "open WhatsApp" or just "WhatsApp" both work.
 
-App registry (`APPS` associative array) is defined inline — add entries as `["keyword"]="package.name"` or `["keyword"]="package/.Activity"` for apps that need explicit activity names (like WhatsApp).
-
 ### `voice-youtube`
-Voice-controlled YouTube search. Opens YouTube directly to results page for whatever you say. Uses `android.intent.action.VIEW` with a youtube.com URL, which YouTube's app intercepts natively.
+Voice-controlled YouTube search. Opens YouTube directly to results page. Strips common prefixes ("play", "search for", "watch", etc.) so natural phrasing works.
 
-Strips common prefixes ("play", "search for", "open youtube and play", "watch", etc.) so natural phrasing works.
+### `voice-screenshot`
+Takes a screenshot via `screencap` and saves to `/sdcard/Download/`. Registers with MediaStore so files appear in Gallery/Google Photos immediately.
 
-### `whisper-listen`
-Offline speech-to-text wrapper around whisper.cpp. Records for a fixed duration (default 5s), converts to 16kHz mono WAV via ffmpeg, transcribes with `ggml-tiny.en.bin`, strips Whisper's hallucinated tags (`[inaudible]`, `(speaking in foreign language)`, etc.).
+### `voice-toggle`
+Voice-controlled system toggles. Supports:
+- **Wi-Fi** on/off/toggle — via `cmd -w wifi set-wifi-enabled`
+- **Bluetooth** on/off/toggle — via `cmd bluetooth_manager enable/disable`
+- **Mobile data** on/off/toggle — via `cmd phone data enable/disable`
+- **Airplane mode** on/off/toggle — via `cmd connectivity airplane-mode`
+- **Flashlight** on/off — via `termux-torch`
 
-Drop-in STT primitive used by all the voice-* scripts. Call directly as `whisper-listen 7` for a 7-second listen window.
+All Android framework commands use `su shell -c` (uid 2000) to avoid the "Failed transaction" issue on Nothing OS 2.5+.
 
-### `parse_alarm.py`
-Helper used by `voice-alarm`. Parses natural-language time expressions — word numbers ("seven thirty"), digit+meridiem ("7am"), HH:MM ("6:30"), AM/PM variants, morning/evening hints — into `HOUR|MINUTE|LABEL` format.
-
-### `voice-not
-Voice-dictated note taker. Prompts for a 5-second title, then up to 60 seconds of content. Saves as a Markdown file in `~/notes/` named `YYYY-MM-DD_HH-MM_slugified-title.md`. Each note includes an H1 title, timestamp, and the dictated content. Notes are plain files — grep-friendly, editor-agnostic, yours forever.
-
-### `voice-note-list`
-Lists all notes in `~/notes/`, newest first, showing filename and title. Simple at-a-glance inventory.
-
-### `voice-note-search`
-Voice-search across all notes. Speak a query (5 seconds), the script greps all `.md` files in `~/notes/` case-insensitively and prints matching filenames, titles, and up to 5 matching lines per file.
-
+### `voice-read-notif`
+Reads the latest WhatsApp notification aloud via `termux-tts-speak`. Uses `termux-notification-list` to fetch active notifications. Requires Termux:API notification access.
 
 ### `voice-note`
-Voice-dictated note taker. Prompts for a 5-second title, then up to 60 seconds of content. Saves as a Markdown file in `~/notes/` named `YYYY-MM-DD_HH-MM_slugified-title.md`. Each note includes an H1 title, timestamp, and the dictated content. Notes are plain files — grep-friendly, editor-agnostic, yours forever.
+Voice-dictated note taker. Prompts for a 5-second title, then up to 60 seconds of content. Saves as Markdown in `~/notes/` named `YYYY-MM-DD_HH-MM_slug.md`.
 
 ### `voice-note-list`
-Lists all notes in `~/notes/`, newest first, showing filename and title. Simple at-a-glance inventory.
+Lists all notes in `~/notes/`, newest first, showing filename and title.
 
 ### `voice-note-search`
-Voice-search across all notes. Speak a query (5 seconds), the script greps all `.md` files in `~/notes/` case-insensitively and prints matching filenames, titles, and up to 5 matching lines per file.
+Voice-search across all notes. Greps all `.md` files case-insensitively and prints matching filenames, titles, and context lines.
 
+### `whisper-listen`
+Offline STT wrapper around whisper.cpp. Records for a fixed duration (default 5s), converts to 16kHz mono WAV via ffmpeg, transcribes with `ggml-tiny.en.bin`, strips hallucinated tags.
 
-## `Requirements
+### `parse_alarm.py`
+Helper used by `voice-alarm`. Parses natural-language time expressions into `HOUR|MINUTE|LABEL` format.
 
-- Termux (F-Droid build — the Play Store version is outdated)
+## Requirements
+
+- Termux (F-Droid build)
 - Termux:API app (F-Droid) + `pkg install termux-api`
 - Termux:Widget (F-Droid) for home-screen triggers (optional)
 - `pkg install python ffmpeg cmake build-essential git`
 - whisper.cpp compiled at `~/whisper.cpp` with `ggml-tiny.en.bin` model
 - Microphone permission granted to Termux **and** Termux:API
+- Notification access granted to Termux:API (for `voice-read-notif`)
+- Magisk root (for `voice-screenshot` and `voice-toggle`)
 
 ## Install
 
@@ -77,7 +86,7 @@ pkg install python ffmpeg cmake build-essential git termux-api
 # Build whisper.cpp
 cd ~
 git clone https://github.com/ggerganov/whisper.cpp
-cd whisper.cpp-
+cd whisper.cpp
 cmake -B build
 cmake --build build -j --config Release
 bash ./models/download-ggml-model.sh tiny.en
@@ -86,6 +95,19 @@ bash ./models/download-ggml-model.sh tiny.en
 cd ~/projects/nothing-archives
 mkdir -p ~/bin
 cp scripts/* ~/bin/
-chmod +x ~/bin/voice-alarm ~/bin/voice-open ~/bin/voice-youtube ~/bin/whisper-listen ~/bin/parse_alarm.py
+chmod +x ~/bin/voice* ~/bin/whisper-listen ~/bin/parse_alarm.py
 echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
+```
+
+## Widget Setup
+
+Symlinks in `~/.shortcuts/` point to scripts in `~/bin/`. Add a Termux:Widget to your home screen to trigger any voice command with one tap.
+
+## Nothing OS Quirks
+
+- `su -c "am ..."` fails with "Failed transaction (2147483646)" — use `su shell -c` instead (drops to shell uid 2000)
+- Media scanner broadcast needs `su shell -c` as well
+- Bluetooth uses `cmd bluetooth_manager` not `service call` (transaction codes differ on Android 14)
+- Airplane mode uses `cmd connectivity airplane-mode` (broadcast requires privileged uid)
+- `termux-wake-lock` recommended before sshd to prevent Android from killing background processes

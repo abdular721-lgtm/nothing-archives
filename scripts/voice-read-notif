@@ -1,0 +1,48 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Read latest WhatsApp notification aloud via TTS
+# Requires: Termux:API notification access granted in Android Settings
+
+set -e
+
+# Accept pre-captured text as $1 (from voice router) — not used for logic here
+# but accepted for consistency with other voice-* scripts
+
+echo "📱 Checking notifications..."
+
+# Get all active notifications as JSON
+NOTIFS=$(termux-notification-list 2>/dev/null)
+
+if [ -z "$NOTIFS" ] || [ "$NOTIFS" = "[]" ]; then
+    MSG="No notifications found"
+    echo "❌ $MSG"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
+    exit 0
+fi
+
+# Filter WhatsApp notifications and get the latest one
+WHATSAPP=$(echo "$NOTIFS" | python3 -c "
+import json, sys
+notifs = json.load(sys.stdin)
+wa = [n for n in notifs if n.get('packageName') == 'com.whatsapp']
+if not wa:
+    print('')
+    sys.exit(0)
+# Sort by id descending (latest first), take the most recent
+latest = wa[-1]
+title = latest.get('title', 'Unknown')
+content = latest.get('content', 'No content')
+print(f'{title}: {content}')
+")
+
+if [ -z "$WHATSAPP" ]; then
+    MSG="No WhatsApp notifications"
+    echo "ℹ️  $MSG"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
+    exit 0
+fi
+
+echo "💬 $WHATSAPP"
+termux-toast "$WHATSAPP"
+termux-tts-speak "$WHATSAPP" 2>/dev/null

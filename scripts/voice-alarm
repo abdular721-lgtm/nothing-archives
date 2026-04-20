@@ -6,9 +6,16 @@ set -e
 MAX_ATTEMPTS=3
 attempt=1
 
+# If pre-captured text passed as $1, use it for the first attempt
+PRE_TEXT="$1"
+
 while [ $attempt -le $MAX_ATTEMPTS ]; do
-    echo "🎤 Attempt $attempt: speak within 5 seconds"
-    TEXT=$(whisper-listen 5)
+    if [ -n "$PRE_TEXT" ] && [ $attempt -eq 1 ]; then
+        TEXT="$PRE_TEXT"
+    else
+        echo "🎤 Attempt $attempt: speak within 5 seconds"
+        TEXT=$(whisper-listen 5)
+    fi
 
     if [ -z "$TEXT" ]; then
         echo "⚠️  No speech detected"
@@ -24,6 +31,7 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
         MINUTE=$(echo "$PARSED" | cut -d'|' -f2)
         LABEL=$(echo "$PARSED" | cut -d'|' -f3)
         MIN_PADDED=$(printf '%02d' "$MINUTE")
+        MSG="Alarm set for ${HOUR}:${MIN_PADDED}"
         echo "⏰ Setting alarm: ${HOUR}:${MIN_PADDED} — $LABEL"
 
         am start -a android.intent.action.SET_ALARM \
@@ -33,7 +41,8 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
             --es android.intent.extra.alarm.MESSAGE "$LABEL" \
             > /dev/null 2>&1
 
-        termux-toast "Alarm set: ${HOUR}:${MIN_PADDED} — $LABEL"
+        termux-toast "$MSG"
+        termux-tts-speak "$MSG" 2>/dev/null &
         exit 0
     fi
 
@@ -41,6 +50,8 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
     attempt=$((attempt + 1))
 done
 
-termux-toast "Failed to set alarm"
+MSG="Failed to set alarm"
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null &
 echo "❌ Gave up after $MAX_ATTEMPTS attempts"
 exit 1

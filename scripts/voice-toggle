@@ -1,0 +1,105 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled system toggles (wifi, bluetooth, data, airplane mode, flashlight)
+# All Android framework commands use "su shell -c" to avoid Failed transaction on Nothing OS
+
+set -e
+
+# Accept pre-captured text as $1 (from voice router) or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say what to toggle (e.g., 'wifi off', 'bluetooth on', 'airplane mode')"
+    TEXT=$(whisper-listen 5 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# Determine desired state
+STATE=""
+if [[ "$T" == *"off"* || "$T" == *"disable"* ]]; then
+    STATE="off"
+elif [[ "$T" == *"on"* || "$T" == *"enable"* ]]; then
+    STATE="on"
+else
+    STATE="toggle"
+fi
+
+TARGET=""
+MSG=""
+
+if [[ "$T" == *"wifi"* || "$T" == *"wi-fi"* || "$T" == *"wi fi"* ]]; then
+    TARGET="wifi"
+    if [ "$STATE" = "toggle" ]; then
+        CUR=$(su shell -c "settings get global wifi_on")
+        if [ "$CUR" = "1" ]; then STATE="off"; else STATE="on"; fi
+    fi
+    case "$STATE" in
+        on)  su shell -c "cmd -w wifi set-wifi-enabled enabled" ;;
+        off) su shell -c "cmd -w wifi set-wifi-enabled disabled" ;;
+    esac
+    MSG="Wi-Fi turned $STATE"
+
+elif [[ "$T" == *"bluetooth"* || "$T" == *"blue tooth"* ]]; then
+    TARGET="bluetooth"
+    if [ "$STATE" = "toggle" ]; then
+        CUR=$(su shell -c "settings get global bluetooth_on")
+        if [ "$CUR" = "1" ]; then STATE="off"; else STATE="on"; fi
+    fi
+    case "$STATE" in
+        on)  su shell -c "cmd bluetooth_manager enable" > /dev/null ;;
+        off) su shell -c "cmd bluetooth_manager disable" > /dev/null ;;
+    esac
+    MSG="Bluetooth turned $STATE"
+
+elif [[ "$T" == *"mobile data"* || "$T" == *"cellular"* || "$T" == *"data"* ]]; then
+    TARGET="mobile data"
+    if [ "$STATE" = "toggle" ]; then
+        CUR=$(su shell -c "settings get global mobile_data")
+        if [ "$CUR" = "1" ]; then STATE="off"; else STATE="on"; fi
+    fi
+    case "$STATE" in
+        on)  su shell -c "cmd phone data enable" ;;
+        off) su shell -c "cmd phone data disable" ;;
+    esac
+    MSG="Mobile data turned $STATE"
+
+elif [[ "$T" == *"airplane"* || "$T" == *"flight mode"* ]]; then
+    TARGET="airplane mode"
+    if [ "$STATE" = "toggle" ]; then
+        CUR=$(su shell -c "settings get global airplane_mode_on")
+        if [ "$CUR" = "1" ]; then STATE="off"; else STATE="on"; fi
+    fi
+    case "$STATE" in
+        on)  su shell -c "cmd connectivity airplane-mode enable" ;;
+        off) su shell -c "cmd connectivity airplane-mode disable" ;;
+    esac
+    MSG="Airplane mode turned $STATE"
+
+elif [[ "$T" == *"flashlight"* || "$T" == *"torch"* ]]; then
+    TARGET="flashlight"
+    if [ "$STATE" = "on" ] || [ "$STATE" = "toggle" ]; then
+        termux-torch on
+        STATE="on"
+    else
+        termux-torch off
+    fi
+    MSG="Flashlight turned $STATE"
+
+else
+    MSG="Unknown toggle: $TEXT"
+    echo "⚠️  No matching toggle. Try: wifi, bluetooth, data, airplane mode, flashlight"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
+    exit 1
+fi
+
+echo "✅ $MSG"
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null &

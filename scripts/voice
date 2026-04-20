@@ -1,0 +1,62 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Unified voice router — listen once, route to the right sub-script
+# Usage: voice (listens for 5 seconds then routes)
+
+set -e
+
+echo "🎤 Listening..."
+TEXT=$(whisper-listen 5 | tr -d '\r\n')
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# Route based on keywords
+if [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; then
+    echo "→ voice-alarm"
+    exec voice-alarm "$TEXT"
+
+elif [[ "$T" == *"youtube"* || "$T" == *"play"* && "$T" == *"video"* ]]; then
+    echo "→ voice-youtube"
+    exec voice-youtube "$TEXT"
+
+elif [[ "$T" == *"open"* || "$T" == *"launch"* || "$T" == *"start"* ]]; then
+    echo "→ voice-open"
+    exec voice-open "$TEXT"
+
+elif [[ "$T" == *"screenshot"* || "$T" == *"screen shot"* || "$T" == *"capture screen"* ]]; then
+    echo "→ voice-screenshot"
+    exec voice-screenshot
+
+elif [[ "$T" == *"wifi"* || "$T" == *"wi-fi"* || "$T" == *"bluetooth"* || "$T" == *"flashlight"* || "$T" == *"torch"* || "$T" == *"airplane"* || "$T" == *"mobile data"* || "$T" == *"cellular"* ]]; then
+    echo "→ voice-toggle"
+    exec voice-toggle "$TEXT"
+
+elif [[ "$T" == *"read"* && "$T" == *"notif"* ]] || [[ "$T" == *"whatsapp"* && "$T" == *"read"* ]] || [[ "$T" == *"notification"* ]]; then
+    echo "→ voice-read-notif"
+    exec voice-read-notif "$TEXT"
+
+elif [[ "$T" == *"search"* && "$T" == *"note"* ]] || [[ "$T" == *"find"* && "$T" == *"note"* ]]; then
+    echo "→ voice-note-search"
+    exec voice-note-search "$TEXT"
+
+elif [[ "$T" == *"list"* && "$T" == *"note"* ]] || [[ "$T" == *"show"* && "$T" == *"note"* ]]; then
+    echo "→ voice-note-list"
+    exec voice-note-list
+
+elif [[ "$T" == *"note"* || "$T" == *"remember"* || "$T" == *"write down"* ]]; then
+    echo "→ voice-note"
+    exec voice-note "$TEXT"
+
+else
+    MSG="I didn't understand: $TEXT"
+    echo "⚠️  $MSG"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
+    exit 1
+fi

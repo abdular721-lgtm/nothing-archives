@@ -10,8 +10,14 @@ if [ ! -d "$NOTES_DIR" ] || [ -z "$(ls -A "$NOTES_DIR" 2>/dev/null)" ]; then
     exit 0
 fi
 
-echo "🎤 Speak your search query (5 seconds)"
-QUERY=$(whisper-listen 5)
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    QUERY=$(echo "$1" | sed -E 's/^(search|find)[[:space:]]+(note[s]?[[:space:]]+)?(for[[:space:]]+)?//i' | xargs)
+    [ -z "$QUERY" ] && QUERY="$1"
+else
+    echo "🎤 Speak your search query (5 seconds)"
+    QUERY=$(whisper-listen 5)
+fi
 
 if [ -z "$QUERY" ]; then
     echo "❌ No query captured"
@@ -27,12 +33,16 @@ echo ""
 MATCHES=$(grep -liE "$QUERY" "$NOTES_DIR"/*.md 2>/dev/null || true)
 
 if [ -z "$MATCHES" ]; then
-    echo "No matches found."
-    termux-toast "No notes match: $QUERY"
+    MSG="No notes match: $QUERY"
+    echo "$MSG"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
     exit 0
 fi
 
-echo "Found matches:"
+COUNT=$(echo "$MATCHES" | wc -l)
+MSG="Found $COUNT matching notes"
+echo "$MSG"
 echo ""
 echo "$MATCHES" | while read -r f; do
     fname=$(basename "$f")
@@ -42,3 +52,6 @@ echo "$MATCHES" | while read -r f; do
     grep -iE --color=never -n "$QUERY" "$f" | head -5
     echo ""
 done
+
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null &

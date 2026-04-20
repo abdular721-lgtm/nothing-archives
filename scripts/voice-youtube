@@ -7,8 +7,13 @@ urlencode() {
     python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "$1"
 }
 
-echo "🎤 Say your search (up to 7 seconds)"
-TEXT=$(whisper-listen 7)
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say your search (up to 7 seconds)"
+    TEXT=$(whisper-listen 7)
+fi
 
 if [ -z "$TEXT" ]; then
     echo "❌ Nothing captured"
@@ -28,4 +33,6 @@ am start -a android.intent.action.VIEW \
          -d "https://www.youtube.com/results?search_query=${ENCODED}" \
          -p com.google.android.youtube > /dev/null 2>&1
 
-termux-toast "YouTube: $QUERY"
+MSG="Searching YouTube for $QUERY"
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null &

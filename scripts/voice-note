@@ -7,8 +7,15 @@ NOTES_DIR="$HOME/notes"
 mkdir -p "$NOTES_DIR"
 
 # --- Step 1: Title ---
-echo "🎤 Speak the TITLE (5 seconds)"
-TITLE_RAW=$(whisper-listen 5 | tr -d '\r\n')
+# Accept pre-captured text as $1 for title, or listen fresh
+if [ -n "$1" ]; then
+    # Strip the trigger keyword from the pre-captured text to use as title
+    TITLE_RAW=$(echo "$1" | sed -E 's/^(note|remember|write down)[[:space:]]+//i' | xargs)
+    [ -z "$TITLE_RAW" ] && TITLE_RAW="$1"
+else
+    echo "🎤 Speak the TITLE (5 seconds)"
+    TITLE_RAW=$(whisper-listen 5 | tr -d '\r\n')
+fi
 
 if [ -z "$TITLE_RAW" ]; then
     echo "❌ No title captured"
@@ -56,6 +63,7 @@ cat > "$FILEPATH" <<EOF
 $CONTENT
 EOF
 
+MSG="Note saved: $TITLE_RAW"
 echo ""
 echo "✅ Saved: $FILEPATH"
 echo ""
@@ -63,4 +71,5 @@ echo "── Content ──"
 cat "$FILEPATH"
 echo "─────────────"
 
-termux-toast "Note saved: $TITLE_RAW"
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null &

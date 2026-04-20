@@ -1,0 +1,26 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Take a screenshot and save to Downloads, scan into gallery
+
+set -e
+
+DOWNLOADS="/sdcard/Download"
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+FILENAME="screenshot_${TIMESTAMP}.png"
+FILEPATH="${DOWNLOADS}/${FILENAME}"
+
+echo "📸 Capturing screen..."
+su -c "screencap -p '$FILEPATH'"
+
+# Fix permissions so gallery can read it
+su -c "chmod 644 '$FILEPATH'"
+
+# Trigger media scanner (su shell -c to avoid Failed transaction)
+su shell -c "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d 'file://$FILEPATH'" > /dev/null 2>&1
+
+# Also register via content insert as a fallback (more reliable on Android 14)
+su shell -c "content insert --uri content://media/external/images/media --bind _data:s:$FILEPATH --bind mime_type:s:image/png --bind _display_name:s:$FILENAME" > /dev/null 2>&1
+
+MSG="Screenshot saved: $FILENAME"
+echo "✅ $MSG"
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null &
