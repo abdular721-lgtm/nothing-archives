@@ -16,8 +16,25 @@ fi
 echo "Heard: $TEXT"
 T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
 
-# Route based on keywords
-if [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; then
+# Route based on keywords — order matters (most specific first)
+
+# ─── Macros (multi-step sequences) ────────────────────────
+if [[ "$T" == *"goodnight"* || "$T" == *"good night"* || "$T" == *"sleep"* || "$T" == *"bedtime"* || "$T" == *"good morning"* || "$T" == *"commute"* || "$T" == *"going out"* || "$T" == *"leaving"* || "$T" == *"focus mode"* || "$T" == *"study mode"* || "$T" == *"work mode"* || "$T" == *"presentation"* || "$T" == *"meeting mode"* || "$T" == *"screen share"* || "$T" == *"normal mode"* || "$T" == *"reset mode"* || "$T" == *"cancel mode"* || "$T" == *"back to normal"* ]]; then
+    echo "→ voice-macro"
+    exec voice-macro "$TEXT"
+
+# ─── Phone calls ──────────────────────────────────────────
+elif [[ "$T" == *"call "* || "$T" == *"phone "* || "$T" == *"ring "* || "$T" == *"dial "* || "$T" == *"hang up"* || "$T" == *"end call"* ]]; then
+    echo "→ voice-call"
+    exec voice-call "$TEXT"
+
+# ─── SMS ──────────────────────────────────────────────────
+elif [[ "$T" == *"send message"* || "$T" == *"send text"* || "$T" == *"text "* || "$T" == *"sms"* || "$T" == *"read message"* || "$T" == *"latest message"* || "$T" == *"any message"* || "$T" == *"read sms"* ]]; then
+    echo "→ voice-sms"
+    exec voice-sms "$TEXT"
+
+# ─── Alarm ────────────────────────────────────────────────
+elif [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; then
     echo "→ voice-alarm"
     exec voice-alarm "$TEXT"
 

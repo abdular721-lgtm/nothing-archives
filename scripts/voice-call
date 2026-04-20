@@ -1,0 +1,96 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled phone calls — dial a contact or end a call
+# Requires: CALL_PHONE permission granted to Termux:API or Termux
+
+set -e
+
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'call [name]' or 'hang up'"
+    TEXT=$(whisper-listen 5 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# Helper: speak and echo
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# Helper: look up phone number from contact name
+lookup_number() {
+    local NAME="$1"
+    termux-contact-list 2>/dev/null | python3 -c "
+import json, sys
+contacts = json.load(sys.stdin)
+query = '$NAME'.lower()
+# Try exact-ish match first, then substring
+best = None
+for c in contacts:
+    cname = c.get('name','').lower()
+    if query == cname:
+        print(c.get('name','') + '|' + c.get('number',''))
+        sys.exit(0)
+    if query in cname and best is None:
+        best = c
+if best:
+    print(best.get('name','') + '|' + best.get('number',''))
+else:
+    print('')
+" 2>/dev/null
+}
+
+# ─── HANG UP / END CALL ──────────────────────────────────
+if [[ "$T" == *"hang up"* || "$T" == *"end call"* || "$T" == *"disconnect"* ]]; then
+    su shell -c "input keyevent 6"
+    say "Call ended."
+
+# ─── MAKE A CALL ──────────────────────────────────────────
+elif [[ "$T" == *"call"* || "$T" == *"phone"* || "$T" == *"ring"* || "$T" == *"dial"* ]]; then
+    # Extract contact name from the command
+    CONTACT_NAME=$(echo "$TEXT" | sed -E 's/.*(call|phone|ring|dial)[[:space:]]+//i' | xargs)
+
+    if [ -z "$CONTACT_NAME" ] || [ "$CONTACT_NAME" = "$TEXT" ]; then
+        say "Who do you want to call?"
+        CONTACT_NAME=$(whisper-listen 5 | tr -d '\r\n')
+    fi
+
+    if [ -z "$CONTACT_NAME" ]; then
+        say "No name heard. Cancelled."
+        exit 1
+    fi
+
+    echo "  Looking up: $CONTACT_NAME"
+    MATCH=$(lookup_number "$CONTACT_NAME")
+
+    if [ -z "$MATCH" ]; then
+        say "No contact found matching $CONTACT_NAME"
+        exit 1
+    fi
+
+    MATCHED_NAME=$(echo "$MATCH" | cut -d'|' -f1)
+    MATCHED_NUM=$(echo "$MATCH" | cut -d'|' -f2)
+    # Clean the number for tel: URI (remove spaces)
+    CLEAN_NUM=$(echo "$MATCHED_NUM" | tr -d ' ')
+
+    echo "  Found: $MATCHED_NAME ($MATCHED_NUM)"
+    say "Calling $MATCHED_NAME"
+
+    # Try ACTION_CALL first (auto-dials), fall back to ACTION_DIAL (shows dialer)
+    am start -a android.intent.action.CALL -d "tel:$CLEAN_NUM" > /dev/null 2>&1 || \
+    am start -a android.intent.action.DIAL -d "tel:$CLEAN_NUM" > /dev/null 2>&1
+
+else
+    say "Say 'call' followed by a contact name, or 'hang up' to end a call."
+    exit 1
+fi

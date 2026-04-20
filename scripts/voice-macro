@@ -1,0 +1,248 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-activated macros — multi-step action sequences
+# Macros: goodnight, good morning, commute, focus, presentation, normal mode
+
+set -e
+
+# Accept pre-captured text as $1 (from voice router) or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say a macro: goodnight, morning, commute, focus, presentation, normal"
+    TEXT=$(whisper-listen 5 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# Helper: speak and echo
+say() {
+    echo "  → $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# ─── GOODNIGHT ────────────────────────────────────────────
+if [[ "$T" == *"goodnight"* || "$T" == *"good night"* || "$T" == *"sleep"* || "$T" == *"bedtime"* ]]; then
+    echo "🌙 Goodnight macro"
+    termux-toast "Goodnight macro starting..."
+
+    # 1. DND on
+    su shell -c "cmd notification set_dnd on"
+    echo "  ✓ DND on"
+
+    # 2. Bluetooth off
+    su shell -c "cmd bluetooth_manager disable" > /dev/null
+    echo "  ✓ Bluetooth off"
+
+    # 3. Ask about Wi-Fi
+    say "Should I turn off Wi-Fi?"
+    WIFI_RESP=$(whisper-listen 5 | tr '[:upper:]' '[:lower:]' | tr -d '\r\n')
+    if [[ "$WIFI_RESP" == *"yes"* || "$WIFI_RESP" == *"yeah"* || "$WIFI_RESP" == *"sure"* ]]; then
+        su shell -c "cmd -w wifi set-wifi-enabled disabled"
+        echo "  ✓ Wi-Fi off"
+    else
+        echo "  ✓ Wi-Fi kept on"
+    fi
+
+    # 4. Brightness minimum
+    su shell -c "settings put system screen_brightness_mode 0"
+    su shell -c "settings put system screen_brightness 10"
+    echo "  ✓ Brightness minimum"
+
+    # 5. Ask for alarm time
+    say "What time should I wake you?"
+    ALARM_TEXT=$(whisper-listen 5 | tr -d '\r\n')
+    ALARM_MSG=""
+    if [ -n "$ALARM_TEXT" ]; then
+        PARSED=$(python3 ~/bin/parse_alarm.py "$ALARM_TEXT" 2>/dev/null || true)
+        if [ -n "$PARSED" ]; then
+            HOUR=$(echo "$PARSED" | cut -d'|' -f1)
+            MINUTE=$(echo "$PARSED" | cut -d'|' -f2)
+            LABEL=$(echo "$PARSED" | cut -d'|' -f3)
+            MIN_PAD=$(printf '%02d' "$MINUTE")
+            am start -a android.intent.action.SET_ALARM \
+                --ei android.intent.extra.alarm.HOUR "$HOUR" \
+                --ei android.intent.extra.alarm.MINUTES "$MINUTE" \
+                --ez android.intent.extra.alarm.SKIP_UI true \
+                --es android.intent.extra.alarm.MESSAGE "$LABEL" \
+                > /dev/null 2>&1
+            ALARM_MSG=" Alarm set for ${HOUR}:${MIN_PAD}."
+            echo "  ✓ Alarm set: ${HOUR}:${MIN_PAD}"
+        else
+            echo "  ⚠ Could not parse alarm time: $ALARM_TEXT"
+        fi
+    else
+        echo "  ⚠ No alarm time heard, skipping"
+    fi
+
+    # 6. Screen off
+    su shell -c "input keyevent 26"
+    echo "  ✓ Screen off"
+
+    # 7. Final TTS
+    say "Goodnight.${ALARM_MSG}"
+
+# ─── GOOD MORNING ─────────────────────────────────────��───
+elif [[ "$T" == *"good morning"* || "$T" == *"morning"* ]]; then
+    echo "☀️  Good morning macro"
+    termux-toast "Good morning!"
+
+    # 1. DND off
+    su shell -c "cmd notification set_dnd off"
+    echo "  ✓ DND off"
+
+    # 2. Auto brightness on
+    su shell -c "settings put system screen_brightness_mode 1"
+    echo "  ✓ Auto brightness on"
+
+    # 3. Time
+    TIME_NOW=$(date +"%I:%M %p")
+
+    # 4. Battery
+    BAT=$(su -c "cat /sys/class/power_supply/battery/capacity")
+
+    # 5. Wi-Fi status
+    WIFI_ON=$(su shell -c "settings get global wifi_on")
+    if [ "$WIFI_ON" = "1" ]; then
+        SSID=$(su shell -c "dumpsys wifi" 2>/dev/null | grep 'mWifiInfo' | head -1 | sed -n 's/.*SSID: "\([^"]*\)".*/\1/p')
+        if [ -n "$SSID" ] && [ "$SSID" != "<unknown ssid>" ]; then
+            WIFI_MSG="Connected to $SSID."
+        else
+            WIFI_MSG="Wi-Fi is on."
+        fi
+    else
+        WIFI_MSG="Wi-Fi is off."
+    fi
+
+    # 6. Notification count
+    NOTIF_COUNT=$(timeout 10 termux-notification-list 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+    # 7. Speak everything
+    say "Good morning. It is $TIME_NOW. Battery is at $BAT percent. $WIFI_MSG You have $NOTIF_COUNT notifications. Have a great day."
+
+# ─── COMMUTE MODE ─────────────────────────────────────────
+elif [[ "$T" == *"commute"* || "$T" == *"going out"* || "$T" == *"leaving"* ]]; then
+    echo "🚗 Commute mode"
+    termux-toast "Commute mode"
+
+    # 1. Mobile data on
+    su shell -c "cmd phone data enable"
+    echo "  ✓ Mobile data on"
+
+    # 2. Bluetooth on
+    su shell -c "cmd bluetooth_manager enable" > /dev/null
+    echo "  ✓ Bluetooth on"
+
+    # 3. Volume max
+    su shell -c "cmd media_session volume --set 15 --stream 3"
+    echo "  ✓ Volume max"
+
+    # 4. Open Maps
+    am start -a android.intent.action.MAIN \
+             -c android.intent.category.LAUNCHER \
+             -p com.google.android.apps.maps > /dev/null 2>&1
+    echo "  ✓ Maps opened"
+
+    # 5. TTS
+    say "Commute mode on. Have a safe journey."
+
+# ─── FOCUS MODE ───────────────────────────────────────────
+elif [[ "$T" == *"focus"* || "$T" == *"study mode"* || "$T" == *"work mode"* ]]; then
+    echo "🎯 Focus mode"
+    termux-toast "Focus mode"
+
+    # 1. DND on
+    su shell -c "cmd notification set_dnd on"
+    echo "  ✓ DND on"
+
+    # 2. Mobile data off
+    su shell -c "cmd phone data disable"
+    echo "  ✓ Mobile data off"
+
+    # 3. Media volume mute
+    su shell -c "cmd media_session volume --set 0 --stream 3"
+    echo "  ✓ Media volume muted"
+
+    # 4. Ring volume silent
+    su shell -c "cmd media_session volume --set 0 --stream 2"
+    echo "  ✓ Ring volume silent"
+
+    # 5. Screen timeout 60s
+    su shell -c "settings put system screen_off_timeout 60000"
+    echo "  ✓ Screen timeout 60s"
+
+    # 6. TTS
+    say "Focus mode on. Good luck."
+
+# ─── PRESENTATION MODE ───────────────────────────────────
+elif [[ "$T" == *"presentation"* || "$T" == *"meeting mode"* || "$T" == *"screen share"* ]]; then
+    echo "📊 Presentation mode"
+    termux-toast "Presentation mode"
+
+    # 1. Brightness max
+    su shell -c "settings put system screen_brightness_mode 0"
+    su shell -c "settings put system screen_brightness 255"
+    echo "  ✓ Brightness max"
+
+    # 2. Auto rotation off
+    su shell -c "settings put system accelerometer_rotation 0"
+    echo "  ✓ Auto rotation off"
+
+    # 3. DND on
+    su shell -c "cmd notification set_dnd on"
+    echo "  ✓ DND on"
+
+    # 4. Volume mute
+    su shell -c "cmd media_session volume --set 0 --stream 3"
+    echo "  ✓ Volume muted"
+
+    # 5. TTS
+    say "Presentation mode on."
+
+# ─── NORMAL MODE (reset) ─────────────────────────────────
+elif [[ "$T" == *"normal mode"* || "$T" == *"reset mode"* || "$T" == *"cancel mode"* || "$T" == *"back to normal"* ]]; then
+    echo "↩️  Normal mode"
+    termux-toast "Normal mode"
+
+    # 1. DND off
+    su shell -c "cmd notification set_dnd off"
+    echo "  ✓ DND off"
+
+    # 2. Auto brightness on
+    su shell -c "settings put system screen_brightness_mode 1"
+    echo "  ✓ Auto brightness on"
+
+    # 3. Auto rotation on
+    su shell -c "settings put system accelerometer_rotation 1"
+    echo "  ✓ Auto rotation on"
+
+    # 4. Volume to 8
+    su shell -c "cmd media_session volume --set 8 --stream 3"
+    echo "  ✓ Media volume 8"
+
+    # 5. Screen timeout 60s
+    su shell -c "settings put system screen_off_timeout 60000"
+    echo "  ✓ Screen timeout 60s"
+
+    # 6. Mobile data on
+    su shell -c "cmd phone data enable"
+    echo "  ✓ Mobile data on"
+
+    # 7. TTS
+    say "Back to normal."
+
+else
+    MSG="Unknown macro: $TEXT. Try: goodnight, morning, commute, focus, presentation, normal mode"
+    echo "⚠️  $MSG"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
+    exit 1
+fi
+
+echo "✅ Macro complete"

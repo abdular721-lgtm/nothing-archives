@@ -1,0 +1,144 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled SMS — read latest messages or send a new one
+# Requires: SMS + Contacts permissions granted to Termux:API
+
+set -e
+
+SQLITE3="/data/data/com.termux/files/usr/bin/sqlite3"
+
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'read messages' or 'send message' or 'text [name]'"
+    TEXT=$(whisper-listen 5 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# Helper: speak and echo
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# Helper: look up contact name from number
+lookup_contact() {
+    local NUM="$1"
+    # Search contacts for this number (try last 7 digits for matching)
+    local SHORT=$(echo "$NUM" | sed 's/[^0-9]//g' | tail -c 8)
+    termux-contact-list 2>/dev/null | python3 -c "
+import json, sys, re
+contacts = json.load(sys.stdin)
+num = '$SHORT'
+for c in contacts:
+    clean = re.sub(r'[^0-9]', '', c.get('number',''))
+    if clean.endswith(num) or num.endswith(clean[-7:]):
+        print(c.get('name', ''))
+        sys.exit(0)
+print('')
+" 2>/dev/null
+}
+
+# Helper: look up phone number from contact name
+lookup_number() {
+    local NAME="$1"
+    termux-contact-list 2>/dev/null | python3 -c "
+import json, sys
+contacts = json.load(sys.stdin)
+query = '$NAME'.lower()
+for c in contacts:
+    if query in c.get('name','').lower():
+        print(c.get('name','') + '|' + c.get('number',''))
+        sys.exit(0)
+print('')
+" 2>/dev/null
+}
+
+# ─── READ MESSAGES ────────────────────────────────────────
+if [[ "$T" == *"read"* || "$T" == *"latest"* || "$T" == *"any message"* || "$T" == *"inbox"* ]]; then
+    echo "📨 Reading messages..."
+
+    MESSAGES=$(timeout 10 termux-sms-list -l 5 2>/dev/null || echo "[]")
+
+    COUNT=$(echo "$MESSAGES" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+    if [ "$COUNT" = "0" ]; then
+        say "No messages found."
+        exit 0
+    fi
+
+    # Parse and speak each message
+    echo "$MESSAGES" | python3 -c "
+import json, sys
+msgs = json.load(sys.stdin)
+for i, m in enumerate(msgs[:3]):
+    sender = m.get('sender', m.get('number', 'Unknown'))
+    body = m.get('body', 'No content')
+    # Truncate long messages for TTS
+    if len(body) > 200:
+        body = body[:200] + '... message truncated'
+    print(f'Message {i+1} from {sender}: {body}')
+" 2>/dev/null | while IFS= read -r line; do
+        say "$line"
+    done
+
+# ─── SEND MESSAGE ─────────────────────────────────────────
+elif [[ "$T" == *"send"* || "$T" == *"text"* || "$T" == *"sms"* ]]; then
+    echo "📤 Send message"
+
+    # Check if a name was included in the command
+    CONTACT_NAME=$(echo "$TEXT" | sed -E 's/.*(text|send( a)?( message)?( to)?|sms( to)?)[[:space:]]+//i' | xargs)
+
+    if [ -z "$CONTACT_NAME" ] || [ "$CONTACT_NAME" = "$TEXT" ]; then
+        say "Who do you want to text?"
+        CONTACT_NAME=$(whisper-listen 5 | tr -d '\r\n')
+    fi
+
+    if [ -z "$CONTACT_NAME" ]; then
+        say "No contact name heard. Cancelled."
+        exit 1
+    fi
+
+    echo "  Looking up: $CONTACT_NAME"
+    MATCH=$(lookup_number "$CONTACT_NAME")
+
+    if [ -z "$MATCH" ]; then
+        say "No contact found matching $CONTACT_NAME"
+        exit 1
+    fi
+
+    MATCHED_NAME=$(echo "$MATCH" | cut -d'|' -f1)
+    MATCHED_NUM=$(echo "$MATCH" | cut -d'|' -f2)
+    echo "  Found: $MATCHED_NAME ($MATCHED_NUM)"
+
+    say "What's your message to $MATCHED_NAME?"
+    MSG_BODY=$(whisper-listen 15 | tr -d '\r\n')
+
+    if [ -z "$MSG_BODY" ]; then
+        say "No message heard. Cancelled."
+        exit 1
+    fi
+
+    echo "  Message: $MSG_BODY"
+    say "Sending to $MATCHED_NAME: $MSG_BODY. Say yes to confirm."
+    CONFIRM=$(whisper-listen 5 | tr '[:upper:]' '[:lower:]' | tr -d '\r\n')
+
+    if [[ "$CONFIRM" == *"yes"* || "$CONFIRM" == *"yeah"* || "$CONFIRM" == *"sure"* || "$CONFIRM" == *"send"* || "$CONFIRM" == *"confirm"* ]]; then
+        termux-sms-send -n "$MATCHED_NUM" "$MSG_BODY"
+        say "Message sent to $MATCHED_NAME."
+    else
+        say "Message cancelled."
+    fi
+
+else
+    say "Say 'read messages' or 'send message to someone'"
+    exit 1
+fi
