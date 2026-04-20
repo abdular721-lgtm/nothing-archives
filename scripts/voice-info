@@ -1,0 +1,89 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-activated system info readouts — speaks results via TTS
+# Targets: time, date, battery, charging, wifi name, storage, ip address, signal
+
+set -e
+
+# Accept pre-captured text as $1 (from voice router) or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Ask about: time, date, battery, wifi, storage, ip, signal"
+    TEXT=$(whisper-listen 5 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+MSG=""
+
+if [[ "$T" == *"time"* && "$T" != *"airplane"* ]]; then
+    MSG="The time is $(date +'%I:%M %p')"
+
+elif [[ "$T" == *"date"* || "$T" == *"today"* || "$T" == *"what day"* ]]; then
+    MSG="Today is $(date +'%A, %d %B %Y')"
+
+elif [[ "$T" == *"battery"* || "$T" == *"charge"* || "$T" == *"power"* ]]; then
+    PCT=$(su -c "cat /sys/class/power_supply/battery/capacity")
+    STATUS=$(su -c "cat /sys/class/power_supply/battery/status")
+    if [ "$STATUS" = "Charging" ]; then
+        MSG="Battery is at ${PCT}%, currently charging"
+    elif [ "$STATUS" = "Full" ]; then
+        MSG="Battery is fully charged"
+    else
+        MSG="Battery is at ${PCT}%"
+    fi
+
+elif [[ "$T" == *"wifi name"* || "$T" == *"connected to"* || "$T" == *"ssid"* || "$T" == *"network name"* ]]; then
+    # Parse SSID from dumpsys wifi (first mWifiInfo line with a real SSID)
+    SSID=$(su shell -c "dumpsys wifi" 2>/dev/null | grep 'mWifiInfo' | head -1 | sed -n 's/.*SSID: "\([^"]*\)".*/\1/p')
+    if [ -n "$SSID" ] && [ "$SSID" != "<unknown ssid>" ]; then
+        MSG="Connected to $SSID"
+    else
+        MSG="Not connected to any Wi-Fi network"
+    fi
+
+elif [[ "$T" == *"signal"* || "$T" == *"wifi strength"* ]]; then
+    RSSI=$(termux-wifi-connectioninfo 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('rssi','unknown'))" 2>/dev/null)
+    if [ -n "$RSSI" ] && [ "$RSSI" != "unknown" ]; then
+        # Classify signal strength
+        if [ "$RSSI" -ge -50 ]; then
+            QUAL="excellent"
+        elif [ "$RSSI" -ge -60 ]; then
+            QUAL="good"
+        elif [ "$RSSI" -ge -70 ]; then
+            QUAL="fair"
+        else
+            QUAL="weak"
+        fi
+        MSG="Wi-Fi signal is $QUAL at $RSSI d B m"
+    else
+        MSG="Could not read Wi-Fi signal"
+    fi
+
+elif [[ "$T" == *"storage"* || "$T" == *"free space"* || "$T" == *"disk"* ]]; then
+    INFO=$(df -h /sdcard | tail -1 | awk '{print $4, "free of", $2, "total"}')
+    MSG="Storage: $INFO"
+
+elif [[ "$T" == *"ip"* || "$T" == *"address"* ]]; then
+    IP=$(su -c "ip addr show wlan0" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+    if [ -n "$IP" ]; then
+        # Speak digits clearly
+        MSG="Your IP address is $IP"
+    else
+        MSG="No IP address found. Wi-Fi may be off"
+    fi
+
+else
+    MSG="I can tell you about: time, date, battery, wifi name, signal, storage, or IP address"
+fi
+
+echo "ℹ️  $MSG"
+termux-toast "$MSG"
+termux-tts-speak "$MSG" 2>/dev/null

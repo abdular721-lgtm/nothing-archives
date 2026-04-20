@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Voice-controlled system toggles (wifi, bluetooth, data, airplane mode, flashlight)
+# Voice-controlled system toggles and adjustments
+# Targets: wifi, bluetooth, data, airplane, flashlight, volume, brightness, DND, dark mode
 # All Android framework commands use "su shell -c" to avoid Failed transaction on Nothing OS
 
 set -e
@@ -92,9 +93,131 @@ elif [[ "$T" == *"flashlight"* || "$T" == *"torch"* ]]; then
     fi
     MSG="Flashlight turned $STATE"
 
+# --- Volume control ---
+# cmd media_session volume: stream 3=media, 2=ring, 1=ring, 4=alarm. Range 0-15.
+elif [[ "$T" == *"volume"* || "$T" == *"mute"* ]]; then
+    TARGET="volume"
+    # Determine which stream
+    STREAM=3  # default: media
+    STREAM_NAME="media"
+    if [[ "$T" == *"ring"* || "$T" == *"ringer"* ]]; then
+        STREAM=2; STREAM_NAME="ring"
+    elif [[ "$T" == *"alarm"* ]]; then
+        STREAM=4; STREAM_NAME="alarm"
+    elif [[ "$T" == *"notification"* ]]; then
+        STREAM=5; STREAM_NAME="notification"
+    fi
+
+    if [[ "$T" == *"mute"* || "$T" == *"silent"* ]]; then
+        su shell -c "cmd media_session volume --set 0 --stream $STREAM"
+        MSG="$STREAM_NAME volume muted"
+    elif [[ "$T" == *"max"* || "$T" == *"full"* ]]; then
+        su shell -c "cmd media_session volume --set 15 --stream $STREAM"
+        MSG="$STREAM_NAME volume set to max"
+    elif [[ "$T" == *"up"* || "$T" == *"raise"* || "$T" == *"higher"* || "$T" == *"increase"* ]]; then
+        su shell -c "cmd media_session volume --adj raise --stream $STREAM"
+        MSG="$STREAM_NAME volume up"
+    elif [[ "$T" == *"down"* || "$T" == *"lower"* || "$T" == *"decrease"* || "$T" == *"reduce"* ]]; then
+        su shell -c "cmd media_session volume --adj lower --stream $STREAM"
+        MSG="$STREAM_NAME volume down"
+    elif [[ "$T" =~ ([0-9]+) ]]; then
+        # Extract number — interpret as 0-15 scale directly
+        VOL="${BASH_REMATCH[1]}"
+        [ "$VOL" -gt 15 ] && VOL=15
+        su shell -c "cmd media_session volume --set $VOL --stream $STREAM"
+        MSG="$STREAM_NAME volume set to $VOL"
+    else
+        # Default: just bump up
+        su shell -c "cmd media_session volume --adj raise --stream $STREAM"
+        MSG="$STREAM_NAME volume up"
+    fi
+
+# --- Brightness control ---
+# settings put system screen_brightness: 0-255. Mode 0=manual, 1=auto.
+elif [[ "$T" == *"brightness"* || "$T" == *"screen"* && ( "$T" == *"bright"* || "$T" == *"dim"* ) ]]; then
+    TARGET="brightness"
+    if [[ "$T" == *"auto"* ]]; then
+        if [ "$STATE" = "off" ]; then
+            su shell -c "settings put system screen_brightness_mode 0"
+            MSG="Auto brightness off"
+        else
+            su shell -c "settings put system screen_brightness_mode 1"
+            MSG="Auto brightness on"
+        fi
+    else
+        # Switch to manual mode for manual adjustments
+        su shell -c "settings put system screen_brightness_mode 0"
+        CUR=$(su shell -c "settings get system screen_brightness")
+
+        if [[ "$T" == *"max"* || "$T" == *"full"* ]]; then
+            su shell -c "settings put system screen_brightness 255"
+            MSG="Brightness set to maximum"
+        elif [[ "$T" == *"min"* || "$T" == *"low"* || "$T" == *"dim"* ]]; then
+            su shell -c "settings put system screen_brightness 10"
+            MSG="Brightness set to minimum"
+        elif [[ "$T" == *"up"* || "$T" == *"raise"* || "$T" == *"higher"* || "$T" == *"increase"* ]]; then
+            NEW=$((CUR + 50))
+            [ "$NEW" -gt 255 ] && NEW=255
+            su shell -c "settings put system screen_brightness $NEW"
+            PCT=$((NEW * 100 / 255))
+            MSG="Brightness up to ${PCT}%"
+        elif [[ "$T" == *"down"* || "$T" == *"lower"* || "$T" == *"decrease"* || "$T" == *"reduce"* ]]; then
+            NEW=$((CUR - 50))
+            [ "$NEW" -lt 5 ] && NEW=5
+            su shell -c "settings put system screen_brightness $NEW"
+            PCT=$((NEW * 100 / 255))
+            MSG="Brightness down to ${PCT}%"
+        elif [[ "$T" =~ ([0-9]+)[[:space:]]*percent ]]; then
+            PCT="${BASH_REMATCH[1]}"
+            VAL=$((PCT * 255 / 100))
+            [ "$VAL" -gt 255 ] && VAL=255
+            [ "$VAL" -lt 1 ] && VAL=1
+            su shell -c "settings put system screen_brightness $VAL"
+            MSG="Brightness set to ${PCT}%"
+        else
+            # Default: bump up
+            NEW=$((CUR + 50))
+            [ "$NEW" -gt 255 ] && NEW=255
+            su shell -c "settings put system screen_brightness $NEW"
+            PCT=$((NEW * 100 / 255))
+            MSG="Brightness set to ${PCT}%"
+        fi
+    fi
+
+# --- Do Not Disturb ---
+# cmd notification set_dnd on/off
+elif [[ "$T" == *"do not disturb"* || "$T" == *"dnd"* || "$T" == *"silent mode"* ]]; then
+    TARGET="do not disturb"
+    if [ "$STATE" = "toggle" ]; then
+        CUR=$(su shell -c "settings get global zen_mode")
+        if [ "$CUR" = "0" ]; then STATE="on"; else STATE="off"; fi
+    fi
+    case "$STATE" in
+        on)  su shell -c "cmd notification set_dnd on" ;;
+        off) su shell -c "cmd notification set_dnd off" ;;
+    esac
+    MSG="Do not disturb turned $STATE"
+
+# --- Dark mode ---
+# cmd uimode night yes/no
+elif [[ "$T" == *"dark mode"* || "$T" == *"night mode"* || "$T" == *"light mode"* ]]; then
+    TARGET="dark mode"
+    # "light mode" means dark mode off
+    if [[ "$T" == *"light mode"* ]]; then
+        STATE="off"
+    elif [ "$STATE" = "toggle" ]; then
+        CUR=$(su shell -c "settings get secure ui_night_mode")
+        if [ "$CUR" = "2" ]; then STATE="off"; else STATE="on"; fi
+    fi
+    case "$STATE" in
+        on)  su shell -c "cmd uimode night yes" > /dev/null ;;
+        off) su shell -c "cmd uimode night no" > /dev/null ;;
+    esac
+    MSG="Dark mode turned $STATE"
+
 else
     MSG="Unknown toggle: $TEXT"
-    echo "⚠️  No matching toggle. Try: wifi, bluetooth, data, airplane mode, flashlight"
+    echo "⚠️  No matching toggle. Try: wifi, bluetooth, data, airplane, flashlight, volume, brightness, dnd, dark mode"
     termux-toast "$MSG"
     termux-tts-speak "$MSG" 2>/dev/null &
     exit 1

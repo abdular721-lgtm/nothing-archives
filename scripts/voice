@@ -33,9 +33,13 @@ elif [[ "$T" == *"screenshot"* || "$T" == *"screen shot"* || "$T" == *"capture s
     echo "→ voice-screenshot"
     exec voice-screenshot
 
-elif [[ "$T" == *"wifi"* || "$T" == *"wi-fi"* || "$T" == *"bluetooth"* || "$T" == *"flashlight"* || "$T" == *"torch"* || "$T" == *"airplane"* || "$T" == *"mobile data"* || "$T" == *"cellular"* ]]; then
+elif [[ "$T" == *"wifi"* || "$T" == *"wi-fi"* || "$T" == *"bluetooth"* || "$T" == *"flashlight"* || "$T" == *"torch"* || "$T" == *"airplane"* || "$T" == *"mobile data"* || "$T" == *"cellular"* || "$T" == *"volume"* || "$T" == *"mute"* || "$T" == *"brightness"* || "$T" == *"do not disturb"* || "$T" == *"dnd"* || "$T" == *"silent mode"* || "$T" == *"dark mode"* || "$T" == *"night mode"* || "$T" == *"light mode"* ]]; then
     echo "→ voice-toggle"
     exec voice-toggle "$TEXT"
+
+elif [[ "$T" == *"time"* || "$T" == *"date"* || "$T" == *"today"* || "$T" == *"battery"* || "$T" == *"charge"* || "$T" == *"storage"* || "$T" == *"free space"* || "$T" == *"ip"* || "$T" == *"wifi name"* || "$T" == *"connected to"* || "$T" == *"signal"* || "$T" == *"what day"* ]]; then
+    echo "→ voice-info"
+    exec voice-info "$TEXT"
 
 elif [[ "$T" == *"read"* && "$T" == *"notif"* ]] || [[ "$T" == *"whatsapp"* && "$T" == *"read"* ]] || [[ "$T" == *"notification"* ]]; then
     echo "→ voice-read-notif"
