@@ -1,0 +1,48 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Run a voice script detached from SSH session to avoid TTS/OOM kills.
+# Usage: run-voice ~/bin/voice-weather "how is the wind"
+#        run-voice --tail ~/bin/voice-weather "how is the wind"
+#
+# --tail: automatically tail the log after launching (blocks until ctrl-c or script ends)
+
+set -e
+
+TAIL_MODE=0
+if [ "$1" = "--tail" ]; then
+    TAIL_MODE=1
+    shift
+fi
+
+if [ -z "$1" ]; then
+    echo "Usage: run-voice [--tail] SCRIPT [ARGS...]"
+    exit 1
+fi
+
+SCRIPT="$1"
+shift
+
+BASENAME=$(basename "$SCRIPT")
+TIMESTAMP=$(date +%s)
+LOG="$HOME/logs/${BASENAME}-${TIMESTAMP}.log"
+mkdir -p "$HOME/logs"
+
+# Launch detached — survives SSH disconnect
+nohup "$SCRIPT" "$@" </dev/null >"$LOG" 2>&1 &
+PID=$!
+disown
+
+echo "Running $BASENAME (PID $PID)"
+echo "Log: $LOG"
+
+if [ "$TAIL_MODE" -eq 1 ]; then
+    # Wait briefly for script to start writing
+    sleep 1
+    tail -f "$LOG" &
+    TAIL_PID=$!
+    # Wait for the actual script to finish, then kill tail
+    while kill -0 $PID 2>/dev/null; do
+        sleep 1
+    done
+    sleep 1  # let final output flush
+    kill $TAIL_PID 2>/dev/null || true
+fi

@@ -1,0 +1,250 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled calendar integration
+# Usage: voice-calendar "what's my schedule today"
+#        voice-calendar "what's tomorrow's schedule"
+#        voice-calendar "when is my next meeting"
+#        voice-calendar "add event lunch with Ali at 2pm"
+#
+# Uses Android content provider (content://com.android.calendar) via root
+
+set -e
+
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'what is my schedule today' or 'add event [title] at [time]'"
+    TEXT=$(~/bin/whisper-listen 8 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# ─── QUERY EVENTS ─────────────────────────────────────────
+query_events() {
+    # Returns all events, Python filters by time range
+    su shell -c "content query --uri content://com.android.calendar/events --projection title:dtstart:dtend:allDay:calendar_id --sort \"dtstart ASC\"" 2>/dev/null
+}
+
+# ─── READ SCHEDULE ────────────────────────────────────────
+read_schedule() {
+    local RANGE="$1"  # "today", "tomorrow", "next", or "week"
+
+    EVENTS=$(query_events | python3 -c "
+import sys, time
+from datetime import datetime, timedelta
+
+range_type = '$RANGE'
+now = datetime.now()
+
+if range_type == 'tomorrow':
+    day_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0)
+    day_end = day_start + timedelta(days=1)
+    label = 'tomorrow'
+elif range_type == 'week':
+    day_start = now
+    day_end = now + timedelta(days=7)
+    label = 'this week'
+elif range_type == 'next':
+    day_start = now
+    day_end = now + timedelta(days=30)
+    label = 'upcoming'
+else:  # today
+    day_start = now.replace(hour=0, minute=0, second=0)
+    day_end = day_start + timedelta(days=1)
+    label = 'today'
+
+start_ms = int(day_start.timestamp() * 1000)
+end_ms = int(day_end.timestamp() * 1000)
+
+events = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith('Row:'):
+        continue
+    parts = {}
+    for field in line.split(', '):
+        if '=' in field:
+            k, v = field.split('=', 1)
+            k = k.strip().split()[-1]
+            parts[k] = v
+    dtstart = int(parts.get('dtstart', 0))
+    title = parts.get('title', 'Untitled')
+    all_day = parts.get('allDay', '0')
+
+    if dtstart >= start_ms and dtstart < end_ms:
+        dt = datetime.fromtimestamp(dtstart / 1000)
+        if all_day == '1':
+            time_str = 'all day'
+        else:
+            time_str = dt.strftime('%I:%M %p').lstrip('0')
+        events.append((dt, title, time_str))
+
+    # For 'next' mode, just get the first future event
+    if range_type == 'next' and dtstart > int(now.timestamp() * 1000):
+        if len(events) >= 1:
+            break
+
+# Sort and output
+events.sort(key=lambda e: e[0])
+
+if range_type == 'next':
+    events = events[:1]
+elif range_type == 'week':
+    events = events[:10]
+else:
+    events = events[:8]
+
+if not events:
+    print(f'NO_EVENTS|Your schedule is clear {label}.')
+else:
+    count = len(events)
+    if range_type == 'next':
+        e = events[0]
+        day_name = e[0].strftime('%A')
+        print(f'EVENT|Your next event is {e[1]} on {day_name} at {e[2]}.')
+    else:
+        print(f'HEADER|You have {count} event{\"s\" if count != 1 else \"\"} {label}.')
+        for e in events:
+            if range_type == 'week':
+                day_name = e[0].strftime('%A')
+                print(f'EVENT|{day_name}: {e[1]} at {e[2]}.')
+            else:
+                print(f'EVENT|{e[1]} at {e[2]}.')
+" 2>/dev/null)
+
+    if [ -z "$EVENTS" ]; then
+        say "Could not read calendar."
+        return
+    fi
+
+    # Collect all messages, echo each, then speak all at once
+    SPEECH=""
+    while IFS='|' read -r TYPE MSG; do
+        echo "  $MSG"
+        SPEECH="${SPEECH} ${MSG}"
+    done <<< "$EVENTS"
+    termux-tts-speak "$SPEECH" 2>/dev/null
+}
+
+# ─── ADD EVENT ────────────────────────────────────────────
+add_event() {
+    local INPUT="$1"
+
+    # Parse event title and time using Python
+    PARSED=$(echo "$INPUT" | python3 -c "
+import re, sys
+from datetime import datetime, timedelta
+
+text = sys.stdin.read().strip().lower()
+
+# Remove command prefix
+for prefix in ['add event ', 'new event ', 'schedule ', 'create event ']:
+    if text.startswith(prefix):
+        text = text[len(prefix):]
+        break
+
+# Split on 'at' to get title and time
+title = ''
+time_str = ''
+m = re.search(r'(.+?)\s+at\s+(.+)', text)
+if m:
+    title = m.group(1).strip()
+    time_str = m.group(2).strip()
+else:
+    # No 'at' — try 'tomorrow' prefix
+    m = re.search(r'tomorrow\s+(.+)', text)
+    if m:
+        title = m.group(1).strip()
+        time_str = 'tomorrow 9am'
+    else:
+        title = text
+        time_str = ''
+
+if not title:
+    print('ERROR|Could not parse event title')
+    sys.exit(0)
+
+# Parse time
+now = datetime.now()
+hour, minute = 9, 0  # default
+
+if time_str:
+    # Handle 'Xpm', 'X:YY pm', 'X am'
+    tm = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?', time_str)
+    if tm:
+        hour = int(tm.group(1))
+        minute = int(tm.group(2) or 0)
+        ampm = (tm.group(3) or '').replace('.', '')
+        if ampm == 'pm' and hour < 12:
+            hour += 12
+        elif ampm == 'am' and hour == 12:
+            hour = 0
+
+# Determine date
+if 'tomorrow' in text:
+    target = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+else:
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+
+end = target + timedelta(hours=1)
+start_ms = int(target.timestamp() * 1000)
+end_ms = int(end.timestamp() * 1000)
+
+time_display = target.strftime('%I:%M %p').lstrip('0')
+day_display = target.strftime('%A')
+
+print(f'{title}|{start_ms}|{end_ms}|{time_display}|{day_display}')
+" 2>/dev/null)
+
+    if [ -z "$PARSED" ] || [[ "$PARSED" == ERROR* ]]; then
+        say "Could not parse the event details."
+        return
+    fi
+
+    TITLE=$(echo "$PARSED" | cut -d'|' -f1)
+    START_MS=$(echo "$PARSED" | cut -d'|' -f2)
+    END_MS=$(echo "$PARSED" | cut -d'|' -f3)
+    TIME_DISPLAY=$(echo "$PARSED" | cut -d'|' -f4)
+    DAY_DISPLAY=$(echo "$PARSED" | cut -d'|' -f5)
+
+    # Use calendar intent to create event (opens Google Calendar for confirmation)
+    su shell -c "am start -a android.intent.action.INSERT \
+        -t vnd.android.cursor.item/event \
+        --es title '$TITLE' \
+        --el beginTime $START_MS \
+        --el endTime $END_MS \
+        --ez allDay false" 2>/dev/null
+
+    say "Creating event: $TITLE on $DAY_DISPLAY at $TIME_DISPLAY. Please confirm on phone."
+}
+
+# ─── ROUTE ────────────────────────────────────────────────
+
+if [[ "$T" == *"add event"* || "$T" == *"new event"* || "$T" == *"create event"* || "$T" == *"create a"* ]]; then
+    add_event "$TEXT"
+
+elif [[ "$T" == *"tomorrow"* ]]; then
+    read_schedule "tomorrow"
+
+elif [[ "$T" == *"this week"* || "$T" == *"next week"* || "$T" == *"week"* ]]; then
+    read_schedule "week"
+
+elif [[ "$T" == *"next"* && ( "$T" == *"meeting"* || "$T" == *"event"* || "$T" == *"appointment"* ) ]]; then
+    read_schedule "next"
+
+else
+    # Default: today's schedule
+    read_schedule "today"
+fi

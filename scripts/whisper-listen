@@ -1,15 +1,57 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Fixed-duration speech-to-text using whisper.cpp
 # Model: base.en (142MB, ~5.4s transcription on Dimensity 7200 Pro)
-# Fallback: set WHISPER_MODEL=tiny.en for ~2.7s transcription at lower accuracy
+# Fallback: tiny.en (~2.7s, lower accuracy) auto-selected if base.en >10s
+#
+# Usage: whisper-listen [--fast|--accurate] [DURATION]
+#   --fast      Force tiny.en regardless of benchmark
+#   --accurate  Force base.en regardless of benchmark
+#   DURATION    Recording duration in seconds (default 5)
 
 set -e
 
+BENCH_FILE="$HOME/.whisper_bench"
+WHISPER="$HOME/whisper.cpp/build/bin/whisper-cli"
+
+# ─── Parse flags ──────────────────────────────────────────
+FORCE_MODEL=""
+while [[ "$1" == --* ]]; do
+    case "$1" in
+        --fast)     FORCE_MODEL="tiny.en"; shift ;;
+        --accurate) FORCE_MODEL="base.en"; shift ;;
+        *)          shift ;;  # ignore unknown flags
+    esac
+done
+
 DURATION="${1:-5}"
+
+# ─── Select model ─────────────────────────────────────────
+if [ -n "$FORCE_MODEL" ]; then
+    MODEL_NAME="$FORCE_MODEL"
+elif [ -n "$WHISPER_MODEL" ]; then
+    MODEL_NAME="$WHISPER_MODEL"
+elif [ -f "$BENCH_FILE" ]; then
+    # Auto-select based on benchmark
+    BENCH_TIME=$(cat "$BENCH_FILE" 2>/dev/null)
+    if [ "$(echo "$BENCH_TIME > 10" | bc 2>/dev/null)" = "1" ]; then
+        MODEL_NAME="tiny.en"
+    else
+        MODEL_NAME="base.en"
+    fi
+else
+    MODEL_NAME="base.en"
+fi
+
+MODEL="$HOME/whisper.cpp/models/ggml-${MODEL_NAME}.bin"
+
+# Verify model file exists; fallback to tiny.en if missing
+if [ ! -f "$MODEL" ]; then
+    MODEL_NAME="tiny.en"
+    MODEL="$HOME/whisper.cpp/models/ggml-${MODEL_NAME}.bin"
+fi
+
 RAW="$HOME/.cache/whisper-listen-raw.m4a"
 WAV="$HOME/.cache/whisper-listen.wav"
-MODEL="$HOME/whisper.cpp/models/ggml-${WHISPER_MODEL:-base.en}.bin"
-WHISPER="$HOME/whisper.cpp/build/bin/whisper-cli"
 
 mkdir -p "$HOME/.cache"
 rm -f "$RAW" "$WAV"
@@ -35,10 +77,22 @@ done
 # Convert to 16kHz mono WAV
 ffmpeg -y -i "$RAW" -ar 16000 -ac 1 -c:a pcm_s16le "$WAV" > /dev/null 2>&1
 
-# Transcribe + clean Whisper's hallucinated tags
+# Transcribe + time it for benchmark
+START_S=$SECONDS
 "$WHISPER" -m "$MODEL" -f "$WAV" --no-timestamps --no-prints 2>/dev/null \
     | tr -d "\r" \
     | sed -E 's/\[(inaudible|BLANK_AUDIO|MUSIC|SILENCE|speaking[^]]*)\]//gi' \
     | sed -E 's/\([^)]+\)//g' \
     | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' \
     | tr -s ' '
+ELAPSED=$((SECONDS - START_S))
+
+# Save benchmark (only for base.en, and only if not forced)
+if [ "$MODEL_NAME" = "base.en" ] && [ -z "$FORCE_MODEL" ]; then
+    echo "$ELAPSED" > "$BENCH_FILE"
+    # Notify once if auto-switching next time
+    if [ "$ELAPSED" -gt 10 ] && [ ! -f "$HOME/.whisper_bench_warned" ]; then
+        termux-toast "Whisper base.en took ${ELAPSED}s — next run will use tiny.en" 2>/dev/null &
+        touch "$HOME/.whisper_bench_warned"
+    fi
+fi

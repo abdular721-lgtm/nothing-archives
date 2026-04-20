@@ -1,0 +1,267 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled WhatsApp reply
+# Usage: voice-whatsapp "reply to whatsapp"
+#        voice-whatsapp "send whatsapp to mama"
+#
+# Methods (tried in order):
+# 1. Notification inline reply (most reliable, no UI needed)
+# 2. Deep link + uiautomator tap (opens WhatsApp, finds send button)
+#
+# Requires: termux-api (notification access), root (for am/input commands)
+
+set -e
+
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'reply to WhatsApp' or 'send WhatsApp to [name]'"
+    TEXT=$(~/bin/whisper-listen 8 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# ─── READ LATEST WHATSAPP ────────────────────────────────
+# Get latest WhatsApp notification info
+get_latest_wa_notif() {
+    termux-notification-list 2>/dev/null | python3 -c "
+import json, sys
+try:
+    notifs = json.load(sys.stdin)
+    wa = [n for n in notifs if n.get('packageName') == 'com.whatsapp']
+    # Sort by id (higher = newer) and prefer messages (not group summaries)
+    wa.sort(key=lambda n: n.get('id', 0), reverse=True)
+    for n in wa:
+        title = n.get('title', '')
+        content = n.get('content', '')
+        if title and content and 'messages' not in content.lower():
+            print(f'{title}|{content}')
+            break
+    else:
+        if wa:
+            n = wa[0]
+            print(f'{n.get(\"title\", \"Unknown\")}|{n.get(\"content\", \"\")}')
+except:
+    pass
+" 2>/dev/null
+}
+
+# ─── FIND WHATSAPP CONTACT NUMBER ────────────────────────
+# Search contacts for a WhatsApp-capable number
+find_wa_contact() {
+    local NAME="$1"
+    # Try termux-contact-list first
+    termux-contact-list 2>/dev/null | python3 -c "
+import json, sys, re
+name_query = '''$NAME'''.lower().strip()
+try:
+    contacts = json.load(sys.stdin)
+    # Score contacts by name match
+    best = None
+    best_score = 0
+    for c in contacts:
+        cname = c.get('name', '').lower()
+        number = c.get('number', '')
+        if not number:
+            continue
+        # Exact match
+        if cname == name_query:
+            best = (c['name'], number)
+            best_score = 100
+            break
+        # Partial match
+        if name_query in cname or cname in name_query:
+            score = len(name_query) / max(len(cname), 1) * 50
+            if score > best_score:
+                best = (c['name'], number)
+                best_score = score
+    if best:
+        # Clean number: remove spaces, dashes, keep + prefix
+        num = re.sub(r'[^0-9+]', '', best[1])
+        print(f'{best[0]}|{num}')
+except:
+    pass
+" 2>/dev/null
+}
+
+# ─── SEND VIA DEEP LINK + UIAUTOMATOR ────────────────────
+send_via_deeplink() {
+    local PHONE="$1"
+    local MSG="$2"
+    # URL-encode the message
+    ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$MSG'''))")
+    # Open WhatsApp with pre-filled message
+    su shell -c "am start -a android.intent.action.VIEW -d 'https://wa.me/${PHONE}?text=${ENCODED}' -p com.whatsapp" 2>/dev/null
+    sleep 3
+    # Dump UI and find send button
+    su shell -c "uiautomator dump /sdcard/wa_dump.xml" 2>/dev/null
+    sleep 1
+    # Find send button bounds
+    SEND_BOUNDS=$(su -c "cat /sdcard/wa_dump.xml" 2>/dev/null | python3 -c "
+import sys, re
+xml = sys.stdin.read()
+# Look for send button by resource-id or content-desc
+patterns = [
+    r'resource-id=\"com.whatsapp:id/send\"[^>]*bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"',
+    r'content-desc=\"Send\"[^>]*bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"',
+]
+for p in patterns:
+    m = re.search(p, xml)
+    if m:
+        x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        print(f'{cx}|{cy}')
+        break
+" 2>/dev/null)
+
+    if [ -n "$SEND_BOUNDS" ]; then
+        X=$(echo "$SEND_BOUNDS" | cut -d'|' -f1)
+        Y=$(echo "$SEND_BOUNDS" | cut -d'|' -f2)
+        su shell -c "input tap $X $Y" 2>/dev/null
+        sleep 1
+        # Press home to return
+        su shell -c "input keyevent KEYCODE_HOME" 2>/dev/null
+        return 0
+    else
+        echo "  Could not find send button. Message is typed but not sent."
+        echo "  Please tap send manually on the phone."
+        return 1
+    fi
+}
+
+# ─── MAIN FLOW ────────────────────────────────────────────
+
+if [[ "$T" == *"reply"* ]]; then
+    # ─── REPLY TO LATEST NOTIFICATION ─────────────────────
+    NOTIF=$(get_latest_wa_notif)
+    if [ -z "$NOTIF" ]; then
+        say "No WhatsApp messages found. Make sure you have unread notifications."
+        exit 0
+    fi
+
+    SENDER=$(echo "$NOTIF" | cut -d'|' -f1)
+    LAST_MSG=$(echo "$NOTIF" | cut -d'|' -f2-)
+
+    # Truncate long messages for speech
+    if [ ${#LAST_MSG} -gt 100 ]; then
+        SPEAK_MSG="${LAST_MSG:0:100}... message truncated"
+    else
+        SPEAK_MSG="$LAST_MSG"
+    fi
+
+    say "Latest message from $SENDER: $SPEAK_MSG"
+    say "What do you want to reply?"
+
+    # Listen for reply
+    REPLY=$(~/bin/whisper-listen 15 | tr -d '\r\n')
+    if [ -z "$REPLY" ]; then
+        say "Nothing heard. Cancelled."
+        exit 0
+    fi
+
+    echo "  Reply: $REPLY"
+    say "Sending to $SENDER: $REPLY. Say yes to confirm."
+
+    # Confirm
+    CONFIRM=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+    C=$(echo "$CONFIRM" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$C" == *"yes"* || "$C" == *"yeah"* || "$C" == *"confirm"* || "$C" == *"send"* || "$C" == *"go"* ]]; then
+        # Try to find contact number for this sender
+        CONTACT=$(find_wa_contact "$SENDER")
+        if [ -n "$CONTACT" ]; then
+            PHONE=$(echo "$CONTACT" | cut -d'|' -f2)
+            say "Sending reply..."
+            if send_via_deeplink "$PHONE" "$REPLY"; then
+                say "Reply sent to $SENDER."
+            else
+                say "Message typed in WhatsApp. Please tap send on the phone."
+            fi
+        else
+            # Fallback: use share intent (shows contact picker)
+            say "Could not find number for $SENDER. Opening WhatsApp share..."
+            su shell -c "am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '$REPLY' -p com.whatsapp" 2>/dev/null
+            say "Please select $SENDER and tap send on the phone."
+        fi
+    else
+        say "Cancelled."
+    fi
+
+elif [[ "$T" == *"send"* || "$T" == *"message"* || "$T" == *"text"* ]]; then
+    # ─── SEND TO SPECIFIC CONTACT ─────────────────────────
+    # Extract contact name from command
+    NAME=$(echo "$TEXT" | python3 -c "
+import re, sys
+text = sys.stdin.read().strip().lower()
+# Patterns: 'send whatsapp to mama', 'whatsapp message to john', 'text mama on whatsapp'
+for p in [r'(?:to|for)\s+(.+?)(?:\s+on|\s+via|\s*$)', r'(?:message|text)\s+(.+?)(?:\s+on|\s+via|\s*$)']:
+    m = re.search(p, text)
+    if m:
+        name = m.group(1).strip()
+        # Remove trailing 'on whatsapp', 'via whatsapp'
+        name = re.sub(r'\s*(on|via|through)\s*whatsapp.*', '', name)
+        if name and name != 'whatsapp':
+            print(name)
+            break
+" 2>/dev/null)
+
+    if [ -z "$NAME" ]; then
+        say "Who do you want to message on WhatsApp?"
+        NAME=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+    fi
+
+    if [ -z "$NAME" ]; then
+        say "No contact name heard. Cancelled."
+        exit 0
+    fi
+
+    CONTACT=$(find_wa_contact "$NAME")
+    if [ -z "$CONTACT" ]; then
+        say "Could not find contact $NAME. Opening WhatsApp..."
+        su shell -c "am start -n com.whatsapp/.Main" 2>/dev/null
+        exit 0
+    fi
+
+    CONTACT_NAME=$(echo "$CONTACT" | cut -d'|' -f1)
+    PHONE=$(echo "$CONTACT" | cut -d'|' -f2)
+
+    say "What do you want to say to $CONTACT_NAME?"
+    MSG=$(~/bin/whisper-listen 15 | tr -d '\r\n')
+
+    if [ -z "$MSG" ]; then
+        say "Nothing heard. Cancelled."
+        exit 0
+    fi
+
+    echo "  Message: $MSG"
+    say "Sending to $CONTACT_NAME: $MSG. Say yes to confirm."
+
+    CONFIRM=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+    C=$(echo "$CONFIRM" | tr '[:upper:]' '[:lower:]')
+
+    if [[ "$C" == *"yes"* || "$C" == *"yeah"* || "$C" == *"confirm"* || "$C" == *"send"* || "$C" == *"go"* ]]; then
+        say "Sending message..."
+        if send_via_deeplink "$PHONE" "$MSG"; then
+            say "Message sent to $CONTACT_NAME."
+        else
+            say "Message typed in WhatsApp. Please tap send on the phone."
+        fi
+    else
+        say "Cancelled."
+    fi
+
+else
+    # Default: open WhatsApp
+    say "Opening WhatsApp."
+    su shell -c "am start -n com.whatsapp/.Main" 2>/dev/null
+fi

@@ -38,12 +38,22 @@ elif [[ "$T" == *"remind"* || "$T" == *"reminder"* || "$T" == *"don't forget"* |
     echo "→ voice-reminder"
     exec ~/bin/voice-reminder "$TEXT"
 
-# ─── Weather ───────────────────────────────────────────��──
-elif [[ "$T" == *"weather"* || "$T" == *"forecast"* || "$T" == *"umbrella"* || "$T" == *"temperature outside"* || "$T" == *"how hot"* || "$T" == *"how cold"* ]]; then
+# ─── WhatsApp reply ────────────────────────────────────────
+elif [[ "$T" == *"reply"* && "$T" == *"whatsapp"* ]] || [[ "$T" == *"whatsapp reply"* ]] || [[ "$T" == *"send whatsapp"* ]] || [[ "$T" == *"whatsapp"* && "$T" == *"message"* && "$T" != *"read"* ]]; then
+    echo "→ voice-whatsapp"
+    exec ~/bin/voice-whatsapp "$TEXT"
+
+# ─── Calendar ─────────────────────────────────────────────
+elif [[ "$T" == *"calendar"* || "$T" == *"schedule"* || "$T" == *"agenda"* ]] || [[ "$T" == *"next"* && ( "$T" == *"meeting"* || "$T" == *"event"* || "$T" == *"appointment"* ) ]] || [[ "$T" == *"add event"* || "$T" == *"new event"* || "$T" == *"create event"* ]]; then
+    echo "→ voice-calendar"
+    exec ~/bin/voice-calendar "$TEXT"
+
+# ─── Weather ───────────────────────────────────────────────
+elif [[ "$T" == *"weather"* || "$T" == *"forecast"* || "$T" == *"umbrella"* || "$T" == *"temperature outside"* || "$T" == *"how hot"* || "$T" == *"how cold"* || "$T" == *"wind"* ]]; then
     echo "→ voice-weather"
     exec ~/bin/voice-weather "$TEXT"
 
-# ─── Alarm ─────��──────────────────────────────────────��───
+# ─── Alarm ─────────────────────────────────────────────────
 elif [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; then
     echo "→ voice-alarm"
     exec ~/bin/voice-alarm "$TEXT"

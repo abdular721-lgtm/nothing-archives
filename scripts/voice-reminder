@@ -1,6 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-controlled reminders — relative ("in 20 minutes") or absolute ("at 3pm")
-# Uses background sleep + TTS + notification. Persists across Termux backgrounding.
+# Uses background sleep + TTS + notification. Persists via ~/notes/reminders.json.
+# On Termux boot, restore-reminders.py re-spawns pending timers.
 
 set -e
 
@@ -34,15 +35,8 @@ say() {
 
 # ─── LIST REMINDERS ───────────────────────────────────────
 if [[ "$T" == *"list"* || "$T" == *"what are my"* || "$T" == *"show"* || "$T" == *"active"* ]]; then
-    if [ ! -f "$REMINDERS_LOG" ] || [ ! -s "$REMINDERS_LOG" ]; then
-        say "No active reminders."
-        exit 0
-    fi
-
-    # Show only future reminders
-    NOW=$(date +%s)
     ACTIVE=$(python3 -c "
-import json, sys, time
+import json, time
 now = int(time.time())
 try:
     with open('$REMINDERS_JSON') as f:
@@ -70,7 +64,19 @@ fi
 # ─── CANCEL REMINDER ─────────────────────────────────────
 if [[ "$T" == *"cancel"* || "$T" == *"clear"* || "$T" == *"delete"* ]]; then
     if [[ "$T" == *"all"* ]]; then
-        # Kill all reminder background processes
+        # Kill all reminder background processes by PID from JSON
+        python3 -c "
+import json, os, signal
+try:
+    with open('$REMINDERS_JSON') as f:
+        reminders = json.load(f)
+    for r in reminders:
+        pid = r.get('pid')
+        if pid:
+            try: os.kill(pid, signal.SIGTERM)
+            except: pass
+except: pass
+" 2>/dev/null
         pkill -f "reminder_fire_" 2>/dev/null || true
         echo '[]' > "$REMINDERS_JSON"
         > "$REMINDERS_LOG"
@@ -118,7 +124,7 @@ if m:
         amount = 1
     else:
         amount = float(amount_str)
-    
+
     if unit.startswith('sec'):
         seconds = int(amount)
     elif unit.startswith('min'):
@@ -134,11 +140,9 @@ elif seconds == 0 and 'half hour' in text:
 
 # Parse absolute time: 'at 3pm', 'at 3:30'
 if seconds == 0 and 'at ' in text:
-    # Extract time portion after 'at'
     time_match = re.search(r'at\s+(.+?)(?:\s+to\s+|\s+that\s+|$)', text)
     if time_match:
         time_str = time_match.group(1)
-        # Use parse_alarm.py logic
         import subprocess
         result = subprocess.run(['python3', '/data/data/com.termux/files/home/bin/parse_alarm.py', time_str],
                               capture_output=True, text=True)
@@ -184,32 +188,12 @@ REM_ID="reminder_fire_$(date +%s%N)"
 # Log it
 echo "$(date '+%Y-%m-%d %H:%M') | in ${MINS}m | $MESSAGE | id=$REM_ID" >> "$REMINDERS_LOG"
 
-# Save to JSON for listing
-python3 -c "
-import json, os
-path = '$REMINDERS_JSON'
-try:
-    with open(path) as f:
-        reminders = json.load(f)
-except:
-    reminders = []
-reminders.append({
-    'id': '$REM_ID',
-    'message': '''$MESSAGE''',
-    'fire_epoch': $FIRE_EPOCH,
-    'seconds': $SECONDS_DELAY,
-    'set_at': '$(date -Iseconds)'
-})
-with open(path, 'w') as f:
-    json.dump(reminders, f, indent=2)
-" 2>/dev/null
-
 # Fire reminder in background — survives SSH disconnect via disown
 (
     sleep "$SECONDS_DELAY"
     termux-notification --title "Reminder" --content "$MESSAGE" --id "$REM_ID" --sound --priority high
     termux-tts-speak "Reminder: $MESSAGE" 2>/dev/null
-    # Remove from active JSON
+    # Remove from active JSON after firing
     python3 -c "
 import json
 path = '$REMINDERS_JSON'
@@ -223,7 +207,29 @@ except:
     pass
 " 2>/dev/null
 ) &
+BG_PID=$!
 disown
+
+# Save to JSON with PID for cancellation and boot restore
+python3 -c "
+import json, os
+path = '$REMINDERS_JSON'
+try:
+    with open(path) as f:
+        reminders = json.load(f)
+except:
+    reminders = []
+reminders.append({
+    'id': '$REM_ID',
+    'message': '''$MESSAGE''',
+    'fire_epoch': $FIRE_EPOCH,
+    'seconds': $SECONDS_DELAY,
+    'pid': $BG_PID,
+    'set_at': '$(date -Iseconds)'
+})
+with open(path, 'w') as f:
+    json.dump(reminders, f, indent=2)
+" 2>/dev/null
 
 # Confirm
 if [ "$MINS" -ge 60 ]; then
@@ -239,4 +245,4 @@ else
 fi
 
 say "Reminder set. I will remind you to $MESSAGE in $TIME_STR."
-echo "✅ Reminder scheduled: '$MESSAGE' in ${TIME_STR} (PID background)"
+echo "✅ Reminder scheduled: '$MESSAGE' in ${TIME_STR} (PID $BG_PID)"
