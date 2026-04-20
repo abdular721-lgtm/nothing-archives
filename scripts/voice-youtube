@@ -1,0 +1,31 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled YouTube search (Whisper backend)
+
+set -e
+
+urlencode() {
+    python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "$1"
+}
+
+echo "🎤 Say your search (up to 7 seconds)"
+TEXT=$(whisper-listen 7)
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing captured"
+    termux-toast "Voice capture failed"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+
+QUERY=$(echo "$TEXT" | sed -E 's/^(open youtube( and)? )?(search( for)?( on youtube( for)?)?|play|find|youtube|look up|watch)[[:space:]]+//i' | xargs)
+[ -z "$QUERY" ] && QUERY="$TEXT"
+
+echo "🔍 YouTube: $QUERY"
+ENCODED=$(urlencode "$QUERY")
+
+am start -a android.intent.action.VIEW \
+         -d "https://www.youtube.com/results?search_query=${ENCODED}" \
+         -p com.google.android.youtube > /dev/null 2>&1
+
+termux-toast "YouTube: $QUERY"

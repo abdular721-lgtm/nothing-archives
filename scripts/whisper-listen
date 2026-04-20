@@ -1,0 +1,42 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Fixed-duration speech-to-text using whisper.cpp
+
+set -e
+
+DURATION="${1:-5}"
+RAW="$HOME/.cache/whisper-listen-raw.m4a"
+WAV="$HOME/.cache/whisper-listen.wav"
+MODEL="$HOME/whisper.cpp/models/ggml-tiny.en.bin"
+WHISPER="$HOME/whisper.cpp/build/bin/whisper-cli"
+
+mkdir -p "$HOME/.cache"
+rm -f "$RAW" "$WAV"
+
+# Record
+termux-microphone-record -f "$RAW" -l "$DURATION" -e wav > /dev/null 2>&1
+
+# Wait for recording to finish + flush
+sleep $((DURATION + 1))
+termux-microphone-record -q > /dev/null 2>&1 || true
+
+# Wait until file size stabilises (max 3s)
+prev_size=0
+for i in 1 2 3; do
+    curr_size=$(stat -c%s "$RAW" 2>/dev/null || echo 0)
+    if [ "$curr_size" -gt 0 ] && [ "$curr_size" = "$prev_size" ]; then
+        break
+    fi
+    prev_size=$curr_size
+    sleep 1
+done
+
+# Convert to 16kHz mono WAV
+ffmpeg -y -i "$RAW" -ar 16000 -ac 1 -c:a pcm_s16le "$WAV" > /dev/null 2>&1
+
+# Transcribe + clean Whisper's hallucinated tags
+"$WHISPER" -m "$MODEL" -f "$WAV" --no-timestamps --no-prints 2>/dev/null \
+    | tr -d "\r" \
+    | sed -E 's/\[(inaudible|BLANK_AUDIO|MUSIC|SILENCE|speaking[^]]*)\]//gi' \
+    | sed -E 's/\([^)]+\)//g' \
+    | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' \
+    | tr -s ' '

@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """Parse natural language like 'set alarm for seven thirty am' → HOUR|MINUTE|LABEL"""
 import sys
@@ -14,7 +13,6 @@ WORD_NUMS = {
 }
 
 def words_to_nums(text):
-    """Convert 'seven thirty' → '7 30', 'twenty five' → '25'."""
     tokens = text.split()
     out = []
     i = 0
@@ -22,7 +20,6 @@ def words_to_nums(text):
         w = tokens[i]
         if w in WORD_NUMS:
             val = WORD_NUMS[w]
-            # Combine "twenty five" → 25
             if val in (20, 30, 40, 50) and i + 1 < len(tokens):
                 nxt = tokens[i + 1]
                 if nxt in WORD_NUMS and WORD_NUMS[nxt] < 10:
@@ -36,6 +33,8 @@ def words_to_nums(text):
 
 def parse(text):
     t = text.lower().strip()
+    # Split glued forms like "7am" → "7 am", "10pm" → "10 pm"
+    t = re.sub(r'(\d)(am|pm|a\.m\.|p\.m\.)', r'\1 \2', t)
     t = words_to_nums(t)
 
     hour = None
@@ -48,7 +47,7 @@ def parse(text):
         if h <= 23 and mn <= 59:
             hour, minute = h, mn
 
-    # Bare hour fallback: "alarm for 7", "wake at 6"
+    # Bare hour fallback
     if hour is None:
         m = re.search(r'\b(\d{1,2})\b', t)
         if m:
@@ -58,10 +57,10 @@ def parse(text):
         return None
 
     # AM/PM handling
-    if 'pm' in t or 'evening' in t or 'afternoon' in t or 'night' in t:
+    if 'pm' in t or 'p.m' in t or 'evening' in t or 'afternoon' in t or 'night' in t:
         if hour < 12:
             hour += 12
-    elif 'am' in t or 'morning' in t:
+    elif 'am' in t or 'a.m' in t or 'morning' in t:
         if hour == 12:
             hour = 0
 

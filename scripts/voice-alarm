@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Voice-controlled alarm setter with retry
+# Voice-controlled alarm setter (Whisper backend)
 
 set -e
 
@@ -7,8 +7,8 @@ MAX_ATTEMPTS=3
 attempt=1
 
 while [ $attempt -le $MAX_ATTEMPTS ]; do
-    echo "🎤 Attempt $attempt: Listening... (say it in one breath)"
-    TEXT=$(termux-speech-to-text)
+    echo "🎤 Attempt $attempt: speak within 5 seconds"
+    TEXT=$(whisper-listen 5)
 
     if [ -z "$TEXT" ]; then
         echo "⚠️  No speech detected"
@@ -23,8 +23,6 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
         HOUR=$(echo "$PARSED" | cut -d'|' -f1)
         MINUTE=$(echo "$PARSED" | cut -d'|' -f2)
         LABEL=$(echo "$PARSED" | cut -d'|' -f3)
-
-        # Zero-pad minute for display
         MIN_PADDED=$(printf '%02d' "$MINUTE")
         echo "⏰ Setting alarm: ${HOUR}:${MIN_PADDED} — $LABEL"
 
@@ -43,6 +41,6 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
     attempt=$((attempt + 1))
 done
 
-termux-toast "Failed to set alarm after $MAX_ATTEMPTS attempts"
+termux-toast "Failed to set alarm"
 echo "❌ Gave up after $MAX_ATTEMPTS attempts"
-exit!
+exit 1
