@@ -1,0 +1,21 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# List all notes, newest first
+
+NOTES_DIR="$HOME/notes"
+
+if [ ! -d "$NOTES_DIR" ] || [ -z "$(ls -A "$NOTES_DIR" 2>/dev/null)" ]; then
+    echo "📭 No notes yet. Run 'voice-note' to create one."
+    exit 0
+fi
+
+echo "📝 Notes in $NOTES_DIR (newest first):"
+echo ""
+
+ls -1t "$NOTES_DIR"/*.md 2>/dev/null | while read -r f; do
+    fname=$(basename "$f")
+    # Extract title from first H1 line
+    title=$(head -1 "$f" | sed -E 's/^#[[:space:]]+//')
+    echo "  • $fname"
+    echo "    $title"
+    echo ""
+done

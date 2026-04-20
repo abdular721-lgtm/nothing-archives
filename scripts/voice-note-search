@@ -1,0 +1,44 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-search through notes, show matches
+
+set -e
+
+NOTES_DIR="$HOME/notes"
+
+if [ ! -d "$NOTES_DIR" ] || [ -z "$(ls -A "$NOTES_DIR" 2>/dev/null)" ]; then
+    echo "📭 No notes yet."
+    exit 0
+fi
+
+echo "🎤 Speak your search query (5 seconds)"
+QUERY=$(whisper-listen 5)
+
+if [ -z "$QUERY" ]; then
+    echo "❌ No query captured"
+    exit 1
+fi
+
+# Trim trailing punctuation from Whisper
+QUERY=$(echo "$QUERY" | sed -E 's/[[:punct:]]+$//' | xargs)
+
+echo "🔍 Searching for: $QUERY"
+echo ""
+
+MATCHES=$(grep -liE "$QUERY" "$NOTES_DIR"/*.md 2>/dev/null || true)
+
+if [ -z "$MATCHES" ]; then
+    echo "No matches found."
+    termux-toast "No notes match: $QUERY"
+    exit 0
+fi
+
+echo "Found matches:"
+echo ""
+echo "$MATCHES" | while read -r f; do
+    fname=$(basename "$f")
+    title=$(head -1 "$f" | sed -E 's/^#[[:space:]]+//')
+    echo "── $fname ──"
+    echo "Title: $title"
+    grep -iE --color=never -n "$QUERY" "$f" | head -5
+    echo ""
+done

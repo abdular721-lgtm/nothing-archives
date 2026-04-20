@@ -35,7 +35,27 @@ Drop-in STT primitive used by all the voice-* scripts. Call directly as `whisper
 ### `parse_alarm.py`
 Helper used by `voice-alarm`. Parses natural-language time expressions — word numbers ("seven thirty"), digit+meridiem ("7am"), HH:MM ("6:30"), AM/PM variants, morning/evening hints — into `HOUR|MINUTE|LABEL` format.
 
-## Requirements
+### `voice-not
+Voice-dictated note taker. Prompts for a 5-second title, then up to 60 seconds of content. Saves as a Markdown file in `~/notes/` named `YYYY-MM-DD_HH-MM_slugified-title.md`. Each note includes an H1 title, timestamp, and the dictated content. Notes are plain files — grep-friendly, editor-agnostic, yours forever.
+
+### `voice-note-list`
+Lists all notes in `~/notes/`, newest first, showing filename and title. Simple at-a-glance inventory.
+
+### `voice-note-search`
+Voice-search across all notes. Speak a query (5 seconds), the script greps all `.md` files in `~/notes/` case-insensitively and prints matching filenames, titles, and up to 5 matching lines per file.
+
+
+### `voice-note`
+Voice-dictated note taker. Prompts for a 5-second title, then up to 60 seconds of content. Saves as a Markdown file in `~/notes/` named `YYYY-MM-DD_HH-MM_slugified-title.md`. Each note includes an H1 title, timestamp, and the dictated content. Notes are plain files — grep-friendly, editor-agnostic, yours forever.
+
+### `voice-note-list`
+Lists all notes in `~/notes/`, newest first, showing filename and title. Simple at-a-glance inventory.
+
+### `voice-note-search`
+Voice-search across all notes. Speak a query (5 seconds), the script greps all `.md` files in `~/notes/` case-insensitively and prints matching filenames, titles, and up to 5 matching lines per file.
+
+
+## `Requirements
 
 - Termux (F-Droid build — the Play Store version is outdated)
 - Termux:API app (F-Droid) + `pkg install termux-api`
@@ -57,7 +77,7 @@ pkg install python ffmpeg cmake build-essential git termux-api
 # Build whisper.cpp
 cd ~
 git clone https://github.com/ggerganov/whisper.cpp
-cd whisper.cpp
+cd whisper.cpp-
 cmake -B build
 cmake --build build -j --config Release
 bash ./models/download-ggml-model.sh tiny.en

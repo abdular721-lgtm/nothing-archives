@@ -1,0 +1,66 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-dictated note taker — one file per note, saved to ~/notes/
+
+set -e
+
+NOTES_DIR="$HOME/notes"
+mkdir -p "$NOTES_DIR"
+
+# --- Step 1: Title ---
+echo "🎤 Speak the TITLE (5 seconds)"
+TITLE_RAW=$(whisper-listen 5 | tr -d '\r\n')
+
+if [ -z "$TITLE_RAW" ]; then
+    echo "❌ No title captured"
+    termux-toast "Note cancelled: no title"
+    exit 1
+fi
+
+echo "Title: $TITLE_RAW"
+
+# Slugify: strip newlines, lowercase, remove punctuation, spaces → hyphens, max 50 chars
+SLUG=$(echo "$TITLE_RAW" \
+    | tr -d '\r\n' \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9 ]//g' \
+    | sed -E 's/[[:space:]]+/-/g' \
+    | sed -E 's/^-+|-+$//g' \
+    | cut -c1-50)
+
+if [ -z "$SLUG" ]; then
+    SLUG="untitled"
+fi
+
+# --- Step 2: Content ---
+echo ""
+echo "🎤 Speak the NOTE CONTENT (60 seconds — pauses OK with Whisper)"
+CONTENT=$(whisper-listen 60)
+
+if [ -z "$CONTENT" ]; then
+    echo "❌ No content captured"
+    termux-toast "Note cancelled: no content"
+    exit 1
+fi
+
+# --- Step 3: Build filename ---
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M")
+FILENAME="${TIMESTAMP}_${SLUG}.md"
+FILEPATH="$NOTES_DIR/$FILENAME"
+
+# --- Step 4: Write note ---
+cat > "$FILEPATH" <<EOF
+# $TITLE_RAW
+
+*$(date +"%A, %d %B %Y at %H:%M")*
+
+$CONTENT
+EOF
+
+echo ""
+echo "✅ Saved: $FILEPATH"
+echo ""
+echo "── Content ──"
+cat "$FILEPATH"
+echo "─────────────"
+
+termux-toast "Note saved: $TITLE_RAW"
