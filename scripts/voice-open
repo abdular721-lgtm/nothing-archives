@@ -1,0 +1,87 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled app launcher
+
+set -e
+
+# App registry: voice keyword → package[/activity]
+# If activity is specified after /, use `am start -n`
+# Otherwise use MAIN+LAUNCHER intent with package only
+declare -A APPS=(
+    ["whatsapp"]="com.whatsapp/.Main"
+    ["whats app"]="com.whatsapp/.Main"
+    ["youtube"]="com.google.android.youtube"
+    ["you tube"]="com.google.android.youtube"
+    ["chrome"]="com.android.chrome"
+    ["gmail"]="com.google.android.gm"
+    ["maps"]="com.google.android.apps.maps"
+    ["google maps"]="com.google.android.apps.maps"
+    ["calendar"]="com.google.android.calendar"
+    ["settings"]="com.android.settings"
+    ["camera"]="com.nothing.snap"
+    ["clock"]="com.nothing.clock"
+    ["photos"]="com.google.photos"
+    ["google photos"]="com.google.photos"
+    ["spotify"]="com.spotify.music"
+    ["instagram"]="com.instagram.android"
+    ["telegram"]="org.telegram.messenger"
+    ["termux"]="com.termux"
+)
+
+launch_app() {
+    local target="$1"
+    if [[ "$target" == *"/"* ]]; then
+        # Explicit component: package/activity
+        am start -n "$target" > /dev/null 2>&1
+    else
+        # Generic launcher intent
+        am start -a android.intent.action.MAIN \
+                 -c android.intent.category.LAUNCHER \
+                 -p "$target" > /dev/null 2>&1
+    fi
+}
+
+MAX_ATTEMPTS=3
+attempt=1
+
+while [ $attempt -le $MAX_ATTEMPTS ]; do
+    echo "🎤 Attempt $attempt: Say app name (e.g., 'WhatsApp', 'YouTube')"
+    TEXT=$(termux-speech-to-text)
+
+    if [ -z "$TEXT" ]; then
+        echo "⚠️  No speech detected"
+        attempt=$((attempt + 1))
+        continue
+    fi
+
+    echo "Heard: $TEXT"
+    TEXT_LOWER=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+    MATCHED_TARGET=""
+    MATCHED_NAME=""
+    for keyword in "${!APPS[@]}"; do
+        if [[ "$TEXT_LOWER" == *"$keyword"* ]]; then
+            MATCHED_TARGET="${APPS[$keyword]}"
+            MATCHED_NAME="$keyword"
+            break
+        fi
+    done
+
+    if [ -n "$MATCHED_TARGET" ]; then
+        echo "📱 Opening: $MATCHED_NAME ($MATCHED_TARGET)"
+        if launch_app "$MATCHED_TARGET"; then
+            termux-toast "Opened: $MATCHED_NAME"
+            exit 0
+        else
+            echo "❌ Launch failed"
+            termux-toast "Launch failed: $MATCHED_NAME"
+            exit 1
+        fi
+    fi
+
+    echo "⚠️  No matching app — try again"
+    attempt=$((attempt + 1))
+done
+
+termux-toast "Could not identify app"
+echo "❌ Gave up after $MAX_ATTEMPTS attempts"
+exit 1

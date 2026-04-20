@@ -1,0 +1,48 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled alarm setter with retry
+
+set -e
+
+MAX_ATTEMPTS=3
+attempt=1
+
+while [ $attempt -le $MAX_ATTEMPTS ]; do
+    echo "🎤 Attempt $attempt: Listening... (say it in one breath)"
+    TEXT=$(termux-speech-to-text)
+
+    if [ -z "$TEXT" ]; then
+        echo "⚠️  No speech detected"
+        attempt=$((attempt + 1))
+        continue
+    fi
+
+    echo "Heard: $TEXT"
+    PARSED=$(python3 ~/bin/parse_alarm.py "$TEXT")
+
+    if [ -n "$PARSED" ]; then
+        HOUR=$(echo "$PARSED" | cut -d'|' -f1)
+        MINUTE=$(echo "$PARSED" | cut -d'|' -f2)
+        LABEL=$(echo "$PARSED" | cut -d'|' -f3)
+
+        # Zero-pad minute for display
+        MIN_PADDED=$(printf '%02d' "$MINUTE")
+        echo "⏰ Setting alarm: ${HOUR}:${MIN_PADDED} — $LABEL"
+
+        am start -a android.intent.action.SET_ALARM \
+            --ei android.intent.extra.alarm.HOUR "$HOUR" \
+            --ei android.intent.extra.alarm.MINUTES "$MINUTE" \
+            --ez android.intent.extra.alarm.SKIP_UI true \
+            --es android.intent.extra.alarm.MESSAGE "$LABEL" \
+            > /dev/null 2>&1
+
+        termux-toast "Alarm set: ${HOUR}:${MIN_PADDED} — $LABEL"
+        exit 0
+    fi
+
+    echo "⚠️  Could not parse time — try again"
+    attempt=$((attempt + 1))
+done
+
+termux-toast "Failed to set alarm after $MAX_ATTEMPTS attempts"
+echo "❌ Gave up after $MAX_ATTEMPTS attempts"
+exit!
