@@ -1,12 +1,14 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Fixed-duration speech-to-text using whisper.cpp
+# Model: base.en (142MB, ~5.4s transcription on Dimensity 7200 Pro)
+# Fallback: set WHISPER_MODEL=tiny.en for ~2.7s transcription at lower accuracy
 
 set -e
 
 DURATION="${1:-5}"
 RAW="$HOME/.cache/whisper-listen-raw.m4a"
 WAV="$HOME/.cache/whisper-listen.wav"
-MODEL="$HOME/whisper.cpp/models/ggml-tiny.en.bin"
+MODEL="$HOME/whisper.cpp/models/ggml-${WHISPER_MODEL:-base.en}.bin"
 WHISPER="$HOME/whisper.cpp/build/bin/whisper-cli"
 
 mkdir -p "$HOME/.cache"

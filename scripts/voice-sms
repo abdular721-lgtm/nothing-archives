@@ -1,6 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Voice-controlled SMS — read latest messages or send a new one
-# Requires: SMS + Contacts permissions granted to Termux:API
+# Voice-controlled SMS/RCS — read latest messages or send a new one
+# Tries RCS (Google Messages bugle_db) first, falls back to traditional SMS
+# Requires: SMS + Contacts permissions granted to Termux:API, root for RCS
 
 set -e
 
@@ -11,7 +12,7 @@ if [ -n "$1" ]; then
     TEXT="$1"
 else
     echo "🎤 Say: 'read messages' or 'send message' or 'text [name]'"
-    TEXT=$(whisper-listen 5 | tr -d '\r\n')
+    TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
 fi
 
 if [ -z "$TEXT" ]; then
@@ -32,7 +33,6 @@ say() {
 # Helper: look up contact name from number
 lookup_contact() {
     local NUM="$1"
-    # Search contacts for this number (try last 7 digits for matching)
     local SHORT=$(echo "$NUM" | sed 's/[^0-9]//g' | tail -c 8)
     termux-contact-list 2>/dev/null | python3 -c "
 import json, sys, re
@@ -66,29 +66,77 @@ print('')
 if [[ "$T" == *"read"* || "$T" == *"latest"* || "$T" == *"any message"* || "$T" == *"inbox"* ]]; then
     echo "📨 Reading messages..."
 
-    MESSAGES=$(timeout 10 termux-sms-list -l 5 2>/dev/null || echo "[]")
+    # Try RCS (Google Messages bugle_db) first, then fall back to SMS
+    RCS_FOUND=0
+    BUGLE="/data/data/com.google.android.apps.messaging/databases/bugle_db"
+    TMP_DB="/data/local/tmp/bugle_copy.db"
 
-    COUNT=$(echo "$MESSAGES" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    if su -c "test -f '$BUGLE'" 2>/dev/null; then
+        su -c "cp '$BUGLE' '$TMP_DB'; cp '${BUGLE}-wal' '${TMP_DB}-wal' 2>/dev/null; cp '${BUGLE}-shm' '${TMP_DB}-shm' 2>/dev/null; chmod 644 ${TMP_DB}*" 2>/dev/null
 
-    if [ "$COUNT" = "0" ]; then
-        say "No messages found."
-        exit 0
+        # Query parts table for message text
+        RCS_MSGS=$("$SQLITE3" "$TMP_DB" "
+SELECT
+    COALESCE(pr.full_name, pr.display_destination, 'Unknown'),
+    p.text
+FROM parts p
+JOIN messages m ON p.message_id = m._id
+LEFT JOIN participants pr ON m.sender_id = pr._id
+WHERE p.text IS NOT NULL AND length(p.text) > 0
+ORDER BY m.received_timestamp DESC
+LIMIT 5" 2>/dev/null || true)
+
+        # Fall back to conversation snippets if parts empty
+        if [ -z "$RCS_MSGS" ]; then
+            RCS_MSGS=$("$SQLITE3" "$TMP_DB" "
+SELECT c.name, c.snippet_text
+FROM conversations c
+WHERE c.snippet_text IS NOT NULL AND length(c.snippet_text) > 0
+    AND c.snippet_text NOT LIKE 'Texting with%'
+ORDER BY c.sort_timestamp DESC
+LIMIT 5" 2>/dev/null || true)
+        fi
+
+        rm -f "$TMP_DB" "${TMP_DB}-wal" "${TMP_DB}-shm" 2>/dev/null
+
+        if [ -n "$RCS_MSGS" ]; then
+            RCS_FOUND=1
+            echo "  (source: Google Messages / RCS)"
+            I=0
+            echo "$RCS_MSGS" | while IFS='|' read -r SENDER MSG; do
+                I=$((I + 1))
+                if [ ${#MSG} -gt 200 ]; then
+                    MSG="${MSG:0:200}... truncated"
+                fi
+                say "Message $I from $SENDER: $MSG"
+            done
+        fi
     fi
 
-    # Parse and speak each message
-    echo "$MESSAGES" | python3 -c "
+    # Fall back to traditional SMS if no RCS messages
+    if [ "$RCS_FOUND" = "0" ]; then
+        MESSAGES=$(timeout 10 termux-sms-list -l 5 2>/dev/null || echo "[]")
+        COUNT=$(echo "$MESSAGES" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+        if [ "$COUNT" = "0" ]; then
+            say "No messages found."
+            exit 0
+        fi
+
+        echo "  (source: SMS inbox)"
+        echo "$MESSAGES" | python3 -c "
 import json, sys
 msgs = json.load(sys.stdin)
 for i, m in enumerate(msgs[:3]):
     sender = m.get('sender', m.get('number', 'Unknown'))
     body = m.get('body', 'No content')
-    # Truncate long messages for TTS
     if len(body) > 200:
         body = body[:200] + '... message truncated'
     print(f'Message {i+1} from {sender}: {body}')
 " 2>/dev/null | while IFS= read -r line; do
-        say "$line"
-    done
+            say "$line"
+        done
+    fi
 
 # ─── SEND MESSAGE ─────────────────────────────────────────
 elif [[ "$T" == *"send"* || "$T" == *"text"* || "$T" == *"sms"* ]]; then
@@ -99,7 +147,7 @@ elif [[ "$T" == *"send"* || "$T" == *"text"* || "$T" == *"sms"* ]]; then
 
     if [ -z "$CONTACT_NAME" ] || [ "$CONTACT_NAME" = "$TEXT" ]; then
         say "Who do you want to text?"
-        CONTACT_NAME=$(whisper-listen 5 | tr -d '\r\n')
+        CONTACT_NAME=$(~/bin/whisper-listen 5 | tr -d '\r\n')
     fi
 
     if [ -z "$CONTACT_NAME" ]; then
@@ -120,7 +168,7 @@ elif [[ "$T" == *"send"* || "$T" == *"text"* || "$T" == *"sms"* ]]; then
     echo "  Found: $MATCHED_NAME ($MATCHED_NUM)"
 
     say "What's your message to $MATCHED_NAME?"
-    MSG_BODY=$(whisper-listen 15 | tr -d '\r\n')
+    MSG_BODY=$(~/bin/whisper-listen 15 | tr -d '\r\n')
 
     if [ -z "$MSG_BODY" ]; then
         say "No message heard. Cancelled."
@@ -129,7 +177,7 @@ elif [[ "$T" == *"send"* || "$T" == *"text"* || "$T" == *"sms"* ]]; then
 
     echo "  Message: $MSG_BODY"
     say "Sending to $MATCHED_NAME: $MSG_BODY. Say yes to confirm."
-    CONFIRM=$(whisper-listen 5 | tr '[:upper:]' '[:lower:]' | tr -d '\r\n')
+    CONFIRM=$(~/bin/whisper-listen 5 | tr '[:upper:]' '[:lower:]' | tr -d '\r\n')
 
     if [[ "$CONFIRM" == *"yes"* || "$CONFIRM" == *"yeah"* || "$CONFIRM" == *"sure"* || "$CONFIRM" == *"send"* || "$CONFIRM" == *"confirm"* ]]; then
         termux-sms-send -n "$MATCHED_NUM" "$MSG_BODY"

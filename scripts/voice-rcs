@@ -1,0 +1,81 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Read RCS/Google Messages from bugle_db (root required)
+# Falls back to conversation snippets if parts.text is empty
+
+set -e
+
+SQLITE3="/data/data/com.termux/files/usr/bin/sqlite3"
+BUGLE="/data/data/com.google.android.apps.messaging/databases/bugle_db"
+TMP="/data/local/tmp/bugle_copy.db"
+
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'read messages' or 'latest messages'"
+    TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+fi
+
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# Copy DB to avoid lock conflicts with Google Messages
+su -c "cp '$BUGLE' '$TMP' && cp '${BUGLE}-wal' '${TMP}-wal' 2>/dev/null; cp '${BUGLE}-shm' '${TMP}-shm' 2>/dev/null; chmod 644 ${TMP}*"
+
+if [ ! -f "$TMP" ]; then
+    say "Could not access Google Messages database."
+    exit 1
+fi
+
+# Try reading messages with text content from parts table first
+RESULTS=$("$SQLITE3" "$TMP" "
+SELECT
+    COALESCE(pr.full_name, pr.display_destination, 'Unknown') AS sender,
+    p.text,
+    m.received_timestamp
+FROM parts p
+JOIN messages m ON p.message_id = m._id
+LEFT JOIN participants pr ON m.sender_id = pr._id
+WHERE p.text IS NOT NULL AND length(p.text) > 0
+ORDER BY m.received_timestamp DESC
+LIMIT 5
+" 2>/dev/null)
+
+# If parts is empty, fall back to conversation snippets
+if [ -z "$RESULTS" ]; then
+    RESULTS=$("$SQLITE3" "$TMP" "
+SELECT
+    c.name AS sender,
+    c.snippet_text AS text,
+    c.sort_timestamp AS ts
+FROM conversations c
+WHERE c.snippet_text IS NOT NULL
+    AND length(c.snippet_text) > 0
+    AND c.snippet_text NOT LIKE 'Texting with%'
+ORDER BY c.sort_timestamp DESC
+LIMIT 5
+    " 2>/dev/null)
+fi
+
+if [ -z "$RESULTS" ]; then
+    say "No messages found in Google Messages."
+    exit 0
+fi
+
+# Parse and speak
+COUNT=0
+echo "$RESULTS" | while IFS='|' read -r SENDER MSG TS; do
+    COUNT=$((COUNT + 1))
+    # Truncate long messages for TTS
+    if [ ${#MSG} -gt 200 ]; then
+        MSG="${MSG:0:200}... message truncated"
+    fi
+    say "From $SENDER: $MSG"
+done
+
+# Clean up
+rm -f "$TMP" "${TMP}-wal" "${TMP}-shm" 2>/dev/null

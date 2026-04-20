@@ -1,0 +1,242 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled reminders — relative ("in 20 minutes") or absolute ("at 3pm")
+# Uses background sleep + TTS + notification. Persists across Termux backgrounding.
+
+set -e
+
+REMINDERS_DIR="$HOME/notes"
+REMINDERS_LOG="$REMINDERS_DIR/reminders.log"
+REMINDERS_JSON="$REMINDERS_DIR/reminders.json"
+
+mkdir -p "$REMINDERS_DIR"
+
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'remind me in 20 minutes to take medication'"
+    TEXT=$(~/bin/whisper-listen 8 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# ─── LIST REMINDERS ───────────────────────────────────────
+if [[ "$T" == *"list"* || "$T" == *"what are my"* || "$T" == *"show"* || "$T" == *"active"* ]]; then
+    if [ ! -f "$REMINDERS_LOG" ] || [ ! -s "$REMINDERS_LOG" ]; then
+        say "No active reminders."
+        exit 0
+    fi
+
+    # Show only future reminders
+    NOW=$(date +%s)
+    ACTIVE=$(python3 -c "
+import json, sys, time
+now = int(time.time())
+try:
+    with open('$REMINDERS_JSON') as f:
+        reminders = json.load(f)
+    active = [r for r in reminders if r.get('fire_epoch', 0) > now]
+    if not active:
+        print('No active reminders.')
+    else:
+        for i, r in enumerate(active, 1):
+            remaining = r['fire_epoch'] - now
+            mins = remaining // 60
+            if mins > 60:
+                time_str = f'{mins // 60} hours {mins % 60} minutes'
+            else:
+                time_str = f'{mins} minutes'
+            print(f'Reminder {i}: {r[\"message\"]} in {time_str}')
+except:
+    print('No active reminders.')
+" 2>/dev/null)
+
+    say "$ACTIVE"
+    exit 0
+fi
+
+# ─── CANCEL REMINDER ─────────────────────────────────────
+if [[ "$T" == *"cancel"* || "$T" == *"clear"* || "$T" == *"delete"* ]]; then
+    if [[ "$T" == *"all"* ]]; then
+        # Kill all reminder background processes
+        pkill -f "reminder_fire_" 2>/dev/null || true
+        echo '[]' > "$REMINDERS_JSON"
+        > "$REMINDERS_LOG"
+        say "All reminders cancelled."
+    else
+        say "Say 'cancel all reminders' to clear everything."
+    fi
+    exit 0
+fi
+
+# ─── SET REMINDER ─────────────────────────────────────────
+
+# Parse the reminder using Python
+PARSED=$(python3 -c "
+import re, sys, time, math
+from datetime import datetime, timedelta
+
+text = '''$TEXT'''.lower()
+
+# Extract the message (after 'to' or 'that')
+msg = ''
+for pattern in [r'(?:to|that)\s+(.+?)$', r'remind\s+(?:me\s+)?(?:in\s+\S+\s+\S+\s+)?(?:to|that)\s+(.+)']:
+    m = re.search(pattern, text)
+    if m:
+        msg = m.group(1).strip().rstrip('.')
+        break
+if not msg:
+    # fallback: everything after time-related words
+    m = re.search(r'(?:minutes?|hours?|seconds?|pm|am)\s+(?:to\s+)?(.+)', text)
+    if m:
+        msg = m.group(1).strip().rstrip('.')
+
+if not msg:
+    msg = 'Check your reminder'
+
+# Parse relative time: 'in X minutes/hours'
+seconds = 0
+m = re.search(r'in\s+(?:an?\s+)?(\d+|half|an?)\s*(second|minute|hour|min|sec|hr)', text)
+if m:
+    amount_str = m.group(1)
+    unit = m.group(2)
+    if amount_str == 'half':
+        amount = 0.5
+    elif amount_str in ('a', 'an'):
+        amount = 1
+    else:
+        amount = float(amount_str)
+    
+    if unit.startswith('sec'):
+        seconds = int(amount)
+    elif unit.startswith('min'):
+        seconds = int(amount * 60)
+    elif unit.startswith('h'):
+        seconds = int(amount * 3600)
+
+# Also try 'in half an hour'
+if seconds == 0 and 'half an hour' in text:
+    seconds = 1800
+elif seconds == 0 and 'half hour' in text:
+    seconds = 1800
+
+# Parse absolute time: 'at 3pm', 'at 3:30'
+if seconds == 0 and 'at ' in text:
+    # Extract time portion after 'at'
+    time_match = re.search(r'at\s+(.+?)(?:\s+to\s+|\s+that\s+|$)', text)
+    if time_match:
+        time_str = time_match.group(1)
+        # Use parse_alarm.py logic
+        import subprocess
+        result = subprocess.run(['python3', '/data/data/com.termux/files/home/bin/parse_alarm.py', time_str],
+                              capture_output=True, text=True)
+        if result.stdout.strip():
+            parts = result.stdout.strip().split('|')
+            hour, minute = int(parts[0]), int(parts[1])
+            now = datetime.now()
+            target = now.replace(hour=hour, minute=minute, second=0)
+            if target <= now:
+                target += timedelta(days=1)
+            seconds = int((target - now).total_seconds())
+
+if seconds <= 0:
+    print('ERROR|Could not parse time from your reminder')
+    sys.exit(0)
+
+fire_epoch = int(time.time()) + seconds
+mins = seconds // 60
+
+print(f'{seconds}|{msg}|{fire_epoch}|{mins}')
+" 2>/dev/null)
+
+if [ -z "$PARSED" ]; then
+    say "Could not understand the reminder time."
+    exit 1
+fi
+
+# Check for parse error
+if [[ "$PARSED" == ERROR* ]]; then
+    ERR_MSG=$(echo "$PARSED" | cut -d'|' -f2)
+    say "$ERR_MSG"
+    exit 1
+fi
+
+SECONDS_DELAY=$(echo "$PARSED" | cut -d'|' -f1)
+MESSAGE=$(echo "$PARSED" | cut -d'|' -f2)
+FIRE_EPOCH=$(echo "$PARSED" | cut -d'|' -f3)
+MINS=$(echo "$PARSED" | cut -d'|' -f4)
+
+# Unique ID for this reminder
+REM_ID="reminder_fire_$(date +%s%N)"
+
+# Log it
+echo "$(date '+%Y-%m-%d %H:%M') | in ${MINS}m | $MESSAGE | id=$REM_ID" >> "$REMINDERS_LOG"
+
+# Save to JSON for listing
+python3 -c "
+import json, os
+path = '$REMINDERS_JSON'
+try:
+    with open(path) as f:
+        reminders = json.load(f)
+except:
+    reminders = []
+reminders.append({
+    'id': '$REM_ID',
+    'message': '''$MESSAGE''',
+    'fire_epoch': $FIRE_EPOCH,
+    'seconds': $SECONDS_DELAY,
+    'set_at': '$(date -Iseconds)'
+})
+with open(path, 'w') as f:
+    json.dump(reminders, f, indent=2)
+" 2>/dev/null
+
+# Fire reminder in background — survives SSH disconnect via disown
+(
+    sleep "$SECONDS_DELAY"
+    termux-notification --title "Reminder" --content "$MESSAGE" --id "$REM_ID" --sound --priority high
+    termux-tts-speak "Reminder: $MESSAGE" 2>/dev/null
+    # Remove from active JSON
+    python3 -c "
+import json
+path = '$REMINDERS_JSON'
+try:
+    with open(path) as f:
+        r = json.load(f)
+    r = [x for x in r if x.get('id') != '$REM_ID']
+    with open(path, 'w') as f:
+        json.dump(r, f, indent=2)
+except:
+    pass
+" 2>/dev/null
+) &
+disown
+
+# Confirm
+if [ "$MINS" -ge 60 ]; then
+    HOURS=$((MINS / 60))
+    REMAIN_MINS=$((MINS % 60))
+    if [ "$REMAIN_MINS" -gt 0 ]; then
+        TIME_STR="$HOURS hours and $REMAIN_MINS minutes"
+    else
+        TIME_STR="$HOURS hours"
+    fi
+else
+    TIME_STR="$MINS minutes"
+fi
+
+say "Reminder set. I will remind you to $MESSAGE in $TIME_STR."
+echo "✅ Reminder scheduled: '$MESSAGE' in ${TIME_STR} (PID background)"

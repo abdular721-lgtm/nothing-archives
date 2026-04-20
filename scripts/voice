@@ -5,7 +5,7 @@
 set -e
 
 echo "🎤 Listening..."
-TEXT=$(whisper-listen 5 | tr -d '\r\n')
+TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
 
 if [ -z "$TEXT" ]; then
     echo "❌ Nothing heard"
@@ -21,58 +21,68 @@ T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
 # ─── Macros (multi-step sequences) ────────────────────────
 if [[ "$T" == *"goodnight"* || "$T" == *"good night"* || "$T" == *"sleep"* || "$T" == *"bedtime"* || "$T" == *"good morning"* || "$T" == *"commute"* || "$T" == *"going out"* || "$T" == *"leaving"* || "$T" == *"focus mode"* || "$T" == *"study mode"* || "$T" == *"work mode"* || "$T" == *"presentation"* || "$T" == *"meeting mode"* || "$T" == *"screen share"* || "$T" == *"normal mode"* || "$T" == *"reset mode"* || "$T" == *"cancel mode"* || "$T" == *"back to normal"* ]]; then
     echo "→ voice-macro"
-    exec voice-macro "$TEXT"
+    exec ~/bin/voice-macro "$TEXT"
 
-# ─── Phone calls ──────────────────────────────────────────
+# ─── Phone calls ─────────���────────────────────────────────
 elif [[ "$T" == *"call "* || "$T" == *"phone "* || "$T" == *"ring "* || "$T" == *"dial "* || "$T" == *"hang up"* || "$T" == *"end call"* ]]; then
     echo "→ voice-call"
-    exec voice-call "$TEXT"
+    exec ~/bin/voice-call "$TEXT"
 
-# ─── SMS ──────────────────────────────────────────────────
-elif [[ "$T" == *"send message"* || "$T" == *"send text"* || "$T" == *"text "* || "$T" == *"sms"* || "$T" == *"read message"* || "$T" == *"latest message"* || "$T" == *"any message"* || "$T" == *"read sms"* ]]; then
+# ─── SMS / RCS ────���──────────────────────────────────────
+elif [[ "$T" == *"send message"* || "$T" == *"send text"* || "$T" == *"text "* || "$T" == *"sms"* || "$T" == *"read message"* || "$T" == *"latest message"* || "$T" == *"any message"* || "$T" == *"read sms"* || "$T" == *"rcs"* || "$T" == *"google message"* ]]; then
     echo "→ voice-sms"
-    exec voice-sms "$TEXT"
+    exec ~/bin/voice-sms "$TEXT"
 
-# ─── Alarm ────────────────────────────────────────────────
+# ─── Reminder ──────────���──────────────────────────────────
+elif [[ "$T" == *"remind"* || "$T" == *"reminder"* || "$T" == *"don't forget"* || "$T" == *"dont forget"* ]]; then
+    echo "→ voice-reminder"
+    exec ~/bin/voice-reminder "$TEXT"
+
+# ─── Weather ───────────────────────────────────────────��──
+elif [[ "$T" == *"weather"* || "$T" == *"forecast"* || "$T" == *"umbrella"* || "$T" == *"temperature outside"* || "$T" == *"how hot"* || "$T" == *"how cold"* ]]; then
+    echo "→ voice-weather"
+    exec ~/bin/voice-weather "$TEXT"
+
+# ─── Alarm ─────��──────────────────────────────────────��───
 elif [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; then
     echo "→ voice-alarm"
-    exec voice-alarm "$TEXT"
+    exec ~/bin/voice-alarm "$TEXT"
 
 elif [[ "$T" == *"youtube"* || "$T" == *"play"* && "$T" == *"video"* ]]; then
     echo "→ voice-youtube"
-    exec voice-youtube "$TEXT"
+    exec ~/bin/voice-youtube "$TEXT"
 
 elif [[ "$T" == *"open"* || "$T" == *"launch"* || "$T" == *"start"* ]]; then
     echo "→ voice-open"
-    exec voice-open "$TEXT"
+    exec ~/bin/voice-open "$TEXT"
 
 elif [[ "$T" == *"screenshot"* || "$T" == *"screen shot"* || "$T" == *"capture screen"* ]]; then
     echo "→ voice-screenshot"
-    exec voice-screenshot
+    exec ~/bin/voice-screenshot
 
 elif [[ "$T" == *"wifi"* || "$T" == *"wi-fi"* || "$T" == *"bluetooth"* || "$T" == *"flashlight"* || "$T" == *"torch"* || "$T" == *"airplane"* || "$T" == *"mobile data"* || "$T" == *"cellular"* || "$T" == *"volume"* || "$T" == *"mute"* || "$T" == *"brightness"* || "$T" == *"do not disturb"* || "$T" == *"dnd"* || "$T" == *"silent mode"* || "$T" == *"dark mode"* || "$T" == *"night mode"* || "$T" == *"light mode"* ]]; then
     echo "→ voice-toggle"
-    exec voice-toggle "$TEXT"
+    exec ~/bin/voice-toggle "$TEXT"
 
 elif [[ "$T" == *"time"* || "$T" == *"date"* || "$T" == *"today"* || "$T" == *"battery"* || "$T" == *"charge"* || "$T" == *"storage"* || "$T" == *"free space"* || "$T" == *"ip"* || "$T" == *"wifi name"* || "$T" == *"connected to"* || "$T" == *"signal"* || "$T" == *"what day"* ]]; then
     echo "→ voice-info"
-    exec voice-info "$TEXT"
+    exec ~/bin/voice-info "$TEXT"
 
 elif [[ "$T" == *"read"* && "$T" == *"notif"* ]] || [[ "$T" == *"whatsapp"* && "$T" == *"read"* ]] || [[ "$T" == *"notification"* ]]; then
     echo "→ voice-read-notif"
-    exec voice-read-notif "$TEXT"
+    exec ~/bin/voice-read-notif "$TEXT"
 
 elif [[ "$T" == *"search"* && "$T" == *"note"* ]] || [[ "$T" == *"find"* && "$T" == *"note"* ]]; then
     echo "→ voice-note-search"
-    exec voice-note-search "$TEXT"
+    exec ~/bin/voice-note-search "$TEXT"
 
 elif [[ "$T" == *"list"* && "$T" == *"note"* ]] || [[ "$T" == *"show"* && "$T" == *"note"* ]]; then
     echo "→ voice-note-list"
-    exec voice-note-list
+    exec ~/bin/voice-note-list
 
 elif [[ "$T" == *"note"* || "$T" == *"remember"* || "$T" == *"write down"* ]]; then
     echo "→ voice-note"
-    exec voice-note "$TEXT"
+    exec ~/bin/voice-note "$TEXT"
 
 else
     MSG="I didn't understand: $TEXT"

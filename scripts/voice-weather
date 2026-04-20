@@ -1,0 +1,114 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled weather readout using wttr.in
+# Supports: current weather, tomorrow forecast, rain/umbrella check, temperature, wind
+
+set -e
+
+CITY="Faisalabad"
+
+# Accept pre-captured text as $1 or listen fresh
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "🎤 Say: 'weather', 'forecast', 'tomorrow', 'rain', 'temperature', 'wind'"
+    TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "❌ Nothing heard"
+    termux-toast "No command captured"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+# Fetch weather JSON (single request, parse multiple ways)
+echo "  Fetching weather for $CITY..."
+JSON=$(curl -s "wttr.in/${CITY}?format=j1" 2>/dev/null)
+
+if [ -z "$JSON" ]; then
+    say "Could not fetch weather. Check your internet connection."
+    exit 1
+fi
+
+# Parse with Python based on intent
+echo "$JSON" | python3 -c "
+import json, sys
+
+d = json.load(sys.stdin)
+c = d['current_condition'][0]
+today = d['weather'][0]
+tomorrow = d['weather'][1]
+query = '''$T'''
+
+temp = c['temp_C']
+desc = c['weatherDesc'][0]['value']
+humidity = c['humidity']
+wind = c['windspeedKmph']
+feels = c['FeelsLikeC']
+
+today_high = today['maxtempC']
+today_low = today['mintempC']
+tmrw_high = tomorrow['maxtempC']
+tmrw_low = tomorrow['mintempC']
+tmrw_desc = tomorrow['hourly'][4]['weatherDesc'][0]['value']
+
+# Check rain for today
+rain_hours = []
+for h in today['hourly']:
+    chance = int(h.get('chanceofrain', '0'))
+    hour = int(h['time']) // 100
+    if chance > 30:
+        period = 'morning' if hour < 12 else 'afternoon' if hour < 18 else 'evening'
+        rain_hours.append((period, chance))
+
+# Determine what to say based on keywords
+lines = []
+
+if 'tomorrow' in query:
+    lines.append(f'Tomorrow in Faisalabad: high of {tmrw_high} degrees, low of {tmrw_low}. Expect {tmrw_desc.lower()}.')
+    # Check tomorrow rain
+    tmrw_rain = []
+    for h in tomorrow['hourly']:
+        chance = int(h.get('chanceofrain', '0'))
+        hour = int(h['time']) // 100
+        if chance > 30:
+            period = 'morning' if hour < 12 else 'afternoon' if hour < 18 else 'evening'
+            tmrw_rain.append((period, chance))
+    if tmrw_rain:
+        best = max(tmrw_rain, key=lambda x: x[1])
+        lines.append(f'{best[1]} percent chance of rain in the {best[0]}.')
+
+elif 'rain' in query or 'umbrella' in query:
+    if rain_hours:
+        best = max(rain_hours, key=lambda x: x[1])
+        lines.append(f'You might want an umbrella. {best[1]} percent chance of rain this {best[0]}.')
+    else:
+        lines.append('No significant rain expected today.')
+
+elif 'temperature' in query or 'how hot' in query or 'how cold' in query or 'temp' in query:
+    lines.append(f'Currently {temp} degrees in Faisalabad. Feels like {feels}.')
+    lines.append(f'Today: high of {today_high}, low of {today_low}.')
+
+elif 'wind' in query:
+    lines.append(f'Wind speed is {wind} kilometres per hour.')
+
+else:
+    # Default: current + today summary
+    lines.append(f'Currently {temp} degrees, {desc.lower()}. Humidity {humidity} percent. Wind {wind} kilometres per hour.')
+    lines.append(f'Today: high of {today_high}, low of {today_low}.')
+    if rain_hours:
+        best = max(rain_hours, key=lambda x: x[1])
+        lines.append(f'{best[1]} percent chance of rain this {best[0]}.')
+
+for line in lines:
+    print(line)
+" 2>/dev/null | while IFS= read -r line; do
+    say "$line"
+done
