@@ -13,7 +13,8 @@ Dev machine: Windows 11, SSH alias `nothing` (host 192.168.132.234, port 8022).
 ```
 User speaks → whisper-listen (whisper.cpp, offline STT)
            → voice (unified router — keyword matching)
-           → voice-* (action scripts)
+           → voice-* (action scripts)          [keyword match]
+           → voice-claude (Claude API fallback) [no match]
            → Android APIs (am, cmd, termux-api, su shell)
 ```
 
@@ -24,6 +25,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 - **TTS**: `termux-tts-speak` (synchronous, use `say()` helper)
 - **Detached execution**: `~/bin/run-voice` (avoids OOM on SSH sessions)
 - **Context store**: `~/bin/voice-context` (shared state, 10min TTL)
+- **Claude API**: `~/bin/voice-claude` (Haiku 4.5, 16 tools, offline fallback)
 
 ## Critical device constraints
 
@@ -42,7 +44,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 - `/tmp` writes → permission denied. Use `~/` or `$HOME/.cache/`.
 - `set -e` in long-running scripts → kills daemon on any non-zero sub-command. Never use in daemons.
 
-## Script inventory (29 scripts)
+## Script inventory (30 scripts)
 
 ### Core
 | Script | Description |
@@ -51,6 +53,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 | `whisper-listen` | Record + transcribe with whisper.cpp. Flags: `--fast` (tiny.en ~3s), `--accurate` (small.en ~20s), `--energy-gate N`. Default: base.en ~5-7s |
 | `run-voice` | Detached script runner — prevents OOM on SSH |
 | `voice-context` | Shared context store (write/read/clear/last). 10min TTL. |
+| `voice-claude` | Claude API integration — intelligent fallback with 16 tool definitions, conversation memory, offline fallback |
 
 ### Wake word
 | Script | Description |
@@ -138,10 +141,36 @@ termux-torch on|off
 ~/.hey-nothing-stats.json     — daemon statistics (JSON: cycles, triggers, start_time)
 ~/.hey-nothing-config         — wake word daemon tuning (threshold, cooldown, quiet hours)
 ~/.smart-home-config          — Home Assistant / n8n endpoints
+~/.anthropic_key               — Claude API key (chmod 600)
+~/.voice-claude-history.json   — Claude conversation history (10min TTL)
 ~/.shortcuts/                 — Termux:Widget symlinks
 ~/.termux/boot/               — Termux:Boot startup scripts
 ~/projects/nothing-archives/  — this git repo
 ```
+
+## Claude API Integration
+
+- **Script**: `~/bin/voice-claude` (Python, 456 lines)
+- **Model**: claude-haiku-4-5-20251001 (fastest, cheapest — ideal for voice)
+- **API key**: `~/.anthropic_key` (chmod 600, never committed)
+- **Conversation history**: `~/.voice-claude-history.json` (10min TTL, last 10 turns)
+- **Fallback**: offline voice router if no network or API error
+- **Tools**: 16 tools mapping to existing voice-* scripts
+- **System prompt**: personalized (ED doctor, app developer, Grimsby)
+- **Latency**: ~2s for direct answers, ~5s for tool calls (includes follow-up)
+
+### How it works
+1. Voice router tries keyword matching first (fast, offline, free)
+2. If no keyword matches → `voice-claude` sends text to Claude API
+3. Claude either answers directly (questions) or calls tools (actions)
+4. Tool calls execute existing voice-* scripts via subprocess
+5. Claude provides follow-up confirmation after tool execution
+6. If no internet → falls back to offline voice router
+
+### Tools available to Claude
+set_alarm, open_app, search_youtube, play_music, toggle_setting, set_reminder,
+get_weather, take_screenshot, make_call, send_sms, read_notifications,
+get_system_info, run_macro, save_note, get_calendar, daily_briefing
 
 ## Development workflow
 
