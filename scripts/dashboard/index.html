@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Voice Assistant</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0a;--surface:#1a1a1a;--surface2:#242424;--surface3:#2e2e2e;
+  --accent:#fff;--accent2:#666;--success:#22c55e;--warning:#f59e0b;--danger:#ef4444;
+  --radius:12px;--font:'Inter',system-ui,-apple-system,sans-serif;
+}
+html,body{font-family:var(--font);background:var(--bg);color:var(--accent);
+  height:100%;overflow:hidden;-webkit-tap-highlight-color:transparent}
+body{display:flex;flex-direction:column}
+
+/* Main content area */
+.app{flex:1;overflow-y:auto;overflow-x:hidden;padding:16px 16px 90px;
+  -webkit-overflow-scrolling:touch}
+.app::-webkit-scrollbar{width:4px}
+.app::-webkit-scrollbar-thumb{background:var(--accent2);border-radius:2px}
+
+/* Bottom nav */
+.nav{position:fixed;bottom:0;left:0;right:0;background:var(--surface);
+  border-top:1px solid var(--surface2);display:flex;z-index:100;
+  padding-bottom:env(safe-area-inset-bottom,0)}
+.nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;
+  padding:8px 4px;background:none;border:none;color:var(--accent2);
+  font:500 10px var(--font);cursor:pointer;transition:color .2s;min-height:56px;
+  justify-content:center;gap:2px}
+.nav-btn.active{color:var(--accent)}
+.nav-btn .icon{font-size:20px;line-height:1}
+
+/* Cards */
+.card{background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:12px}
+.card-title{font-weight:600;font-size:14px;margin-bottom:12px;color:var(--accent2);
+  text-transform:uppercase;letter-spacing:.5px}
+
+/* Status pills */
+.pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;
+  background:var(--surface2);border-radius:20px;font-size:12px;font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.on{background:var(--success)}
+.dot.off{background:var(--danger)}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:10px 16px;border-radius:var(--radius);border:none;font:500 13px var(--font);
+  cursor:pointer;transition:opacity .2s;min-height:44px;min-width:44px}
+.btn:active{opacity:.7}
+.btn:disabled{opacity:.4;pointer-events:none}
+.btn-primary{background:var(--accent);color:var(--bg)}
+.btn-secondary{background:var(--surface2);color:var(--accent)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-success{background:var(--success);color:#fff}
+.btn-warning{background:var(--warning);color:#000}
+.btn-sm{padding:6px 12px;font-size:12px;min-height:36px}
+.btn-block{width:100%}
+
+/* Quick actions grid */
+.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.action-grid .btn{font-size:12px;padding:12px 8px}
+
+/* Forms */
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;color:var(--accent2);margin-bottom:6px;font-weight:500}
+input[type="text"],input[type="number"],input[type="password"],input[type="date"],
+input[type="time"],select,textarea{
+  width:100%;padding:10px 12px;background:var(--surface2);border:1px solid var(--surface3);
+  border-radius:8px;color:var(--accent);font:400 14px var(--font);outline:none;
+  min-height:44px}
+input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
+textarea{resize:vertical;min-height:100px}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23666'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center}
+
+/* Toggle switch */
+.toggle{position:relative;width:48px;height:28px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;inset:0;background:var(--surface3);border-radius:14px;
+  cursor:pointer;transition:.3s}
+.toggle .slider::before{content:'';position:absolute;width:22px;height:22px;left:3px;
+  bottom:3px;background:var(--accent2);border-radius:50%;transition:.3s}
+.toggle input:checked+.slider{background:var(--success)}
+.toggle input:checked+.slider::before{transform:translateX(20px);background:#fff}
+
+/* Range slider */
+input[type="range"]{-webkit-appearance:none;width:100%;height:6px;background:var(--surface3);
+  border-radius:3px;outline:none;margin:8px 0}
+input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;
+  background:var(--accent);border-radius:50%;cursor:pointer}
+
+/* Radio buttons */
+.radio-group{display:flex;gap:8px;flex-wrap:wrap}
+.radio-btn{flex:1;min-width:80px}
+.radio-btn input{display:none}
+.radio-btn label{display:block;padding:8px 12px;background:var(--surface2);
+  border-radius:8px;text-align:center;font-size:13px;cursor:pointer;
+  border:2px solid transparent;transition:.2s}
+.radio-btn input:checked+label{border-color:var(--accent);background:var(--surface3)}
+
+/* Accordion */
+.accordion{margin-bottom:8px}
+.accordion-header{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;background:var(--surface);border-radius:var(--radius);
+  cursor:pointer;font-weight:600;font-size:14px}
+.accordion-header::after{content:'+';font-size:18px;color:var(--accent2);transition:.2s}
+.accordion.open .accordion-header::after{content:'-'}
+.accordion-body{display:none;padding:16px;background:var(--surface);
+  border-radius:0 0 var(--radius) var(--radius);margin-top:-8px;padding-top:24px}
+.accordion.open .accordion-body{display:block}
+.accordion.open .accordion-header{border-radius:var(--radius) var(--radius) 0 0}
+
+/* Logs */
+.log-container{background:var(--bg);border-radius:8px;padding:12px;
+  max-height:400px;overflow-y:auto;font:12px/1.6 'Courier New',monospace}
+.log-line{padding:2px 0;word-break:break-all}
+.log-line.error{color:var(--danger)}
+.log-line.warning{color:var(--warning)}
+.log-line.success{color:var(--success)}
+
+/* Error cards */
+.error-card{background:rgba(239,68,68,.1);border-left:3px solid var(--danger);
+  padding:10px 12px;border-radius:0 8px 8px 0;margin-bottom:8px}
+.error-card .source{font-size:11px;color:var(--danger);font-weight:600;text-transform:uppercase}
+.error-card .msg{font:12px/1.5 'Courier New',monospace;margin-top:4px;word-break:break-all}
+.error-card .ts{font-size:11px;color:var(--accent2);margin-top:4px}
+
+/* App cards */
+.app-card{background:var(--surface2);border-radius:var(--radius);padding:14px;
+  margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.app-card .info{flex:1;min-width:0}
+.app-card .name{font-weight:600;font-size:14px}
+.app-card .pkg{font-size:11px;color:var(--accent2);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.app-card .keywords{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.chip{font-size:10px;padding:2px 8px;background:var(--surface3);border-radius:10px;
+  color:var(--accent2)}
+
+/* Shift cards */
+.shift-card{background:var(--surface2);border-radius:var(--radius);padding:14px;
+  margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.shift-date{text-align:center;min-width:50px}
+.shift-date .day{font-size:20px;font-weight:700}
+.shift-date .month{font-size:11px;color:var(--accent2)}
+.shift-info{flex:1}
+.shift-type{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;
+  font-weight:600;text-transform:uppercase}
+.shift-type.day{background:rgba(245,158,11,.2);color:var(--warning)}
+.shift-type.night{background:rgba(99,102,241,.2);color:#818cf8}
+.shift-time{font-size:13px;margin-top:4px;color:var(--accent2)}
+
+/* Sub-tabs */
+.sub-tabs{display:flex;gap:4px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px}
+.sub-tabs::-webkit-scrollbar{display:none}
+.sub-tab{padding:6px 12px;background:var(--surface2);border:none;border-radius:20px;
+  color:var(--accent2);font:500 12px var(--font);cursor:pointer;white-space:nowrap;
+  min-height:36px}
+.sub-tab.active{background:var(--accent);color:var(--bg)}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;
+  display:none;align-items:flex-end;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:var(--surface);border-radius:var(--radius) var(--radius) 0 0;
+  width:100%;max-width:500px;max-height:80vh;overflow-y:auto;padding:20px;
+  animation:slideUp .3s}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-title{font-weight:700;font-size:16px;margin-bottom:16px}
+
+/* Toast */
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);
+  padding:10px 20px;border-radius:var(--radius);background:var(--surface2);
+  color:var(--accent);font-size:13px;font-weight:500;z-index:300;
+  opacity:0;transition:opacity .3s;pointer-events:none;text-align:center;
+  max-width:90vw;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+.toast.show{opacity:1}
+.toast.success{background:var(--success);color:#fff}
+.toast.error{background:var(--danger);color:#fff}
+
+/* Section header */
+.section-header{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:12px}
+.section-title{font-weight:700;font-size:18px}
+
+/* Big status */
+.big-status{text-align:center;padding:20px}
+.big-status .status-dot{width:20px;height:20px;border-radius:50%;margin:0 auto 8px;
+  box-shadow:0 0 12px currentColor}
+.big-status .label{font-size:22px;font-weight:700}
+.big-status .sublabel{font-size:13px;color:var(--accent2);margin-top:4px}
+
+/* Stat row */
+.stat-row{display:flex;gap:8px}
+.stat{flex:1;text-align:center;padding:12px 8px;background:var(--surface2);
+  border-radius:var(--radius)}
+.stat .value{font-size:20px;font-weight:700}
+.stat .label{font-size:11px;color:var(--accent2);margin-top:2px}
+
+/* Daemon control cards */
+.daemon-card{background:var(--surface2);border-radius:var(--radius);padding:14px;
+  margin-bottom:8px}
+.daemon-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.daemon-header .name{font-weight:600;flex:1}
+.daemon-actions{display:flex;gap:6px}
+
+/* Inline row */
+.inline-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin-bottom:12px}
+.inline-row label{font-size:13px;flex:1}
+
+/* Range with value */
+.range-row{margin-bottom:16px}
+.range-row .range-header{display:flex;justify-content:space-between;margin-bottom:4px}
+.range-row label{font-size:12px;color:var(--accent2);font-weight:500}
+.range-row .range-val{font-size:13px;font-weight:600}
+
+/* Command history rows */
+.cmd-row{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--surface2);
+  align-items:flex-start}
+.cmd-row .time{font-size:12px;color:var(--accent2);white-space:nowrap;min-width:45px}
+.cmd-row .text{font-size:13px;flex:1}
+.cmd-row .route-badge{font-size:10px;padding:2px 6px;background:var(--surface3);
+  border-radius:8px;color:var(--accent2);white-space:nowrap}
+
+/* Search */
+.search-box{position:relative;margin-bottom:12px}
+.search-box input{padding-left:36px}
+.search-box::before{content:'search';font-family:'Material Icons';position:absolute;
+  left:12px;top:50%;transform:translateY(-50%);color:var(--accent2)}
+
+/* Shift status card */
+.shift-status-card{background:linear-gradient(135deg,#1a1a2e,#16213e);
+  border-radius:var(--radius);padding:16px;margin-bottom:12px}
+.shift-status-card .title{font-size:11px;color:var(--accent2);text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:6px}
+.shift-status-card .status{font-size:15px;font-weight:600;line-height:1.4}
+
+/* Tab panels */
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* Loading skeleton */
+.skeleton{background:linear-gradient(90deg,var(--surface2) 25%,var(--surface3) 50%,var(--surface2) 75%);
+  background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:8px;height:20px;margin-bottom:8px}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* Utility */
+.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}
+.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}
+.text-sm{font-size:12px}.text-xs{font-size:11px}
+.text-muted{color:var(--accent2)}
+.text-success{color:var(--success)}
+.text-danger{color:var(--danger)}
+.text-warning{color:var(--warning)}
+.flex-row{display:flex;align-items:center;gap:8px}
+.gap-8{gap:8px}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+
+<!-- Toast notification -->
+<div id="toast" class="toast"></div>
+
+<!-- Modal overlay -->
+<div id="modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<!-- Main content -->
+<div class="app" id="app">
+
+  <!-- TAB 1: HOME -->
+  <div class="tab-panel active" id="tab-home">
+    <!-- Big status -->
+    <div class="card big-status" id="wake-status">
+      <div class="status-dot" id="wake-dot" style="background:var(--accent2)"></div>
+      <div class="label" id="wake-label">Loading...</div>
+      <div class="sublabel" id="wake-sublabel"></div>
+    </div>
+
+    <!-- Daemon pills -->
+    <div class="pills" id="daemon-pills"></div>
+
+    <!-- System info -->
+    <div class="stat-row mb-12">
+      <div class="stat">
+        <div class="value" id="battery-val">--</div>
+        <div class="label">Battery</div>
+      </div>
+      <div class="stat">
+        <div class="value" id="wifi-val" style="font-size:14px">--</div>
+        <div class="label">WiFi</div>
+      </div>
+      <div class="stat">
+        <div class="value" id="storage-val">--</div>
+        <div class="label">Free</div>
+      </div>
+      <div class="stat">
+        <div class="value" id="cmds-val">0</div>
+        <div class="label">Commands</div>
+      </div>
+    </div>
+
+    <!-- Shift status -->
+    <div class="shift-status-card">
+      <div class="title">Shift Status</div>
+      <div class="status" id="shift-status-text">Loading...</div>
+    </div>
+
+    <!-- Location -->
+    <div class="card" id="location-card" style="display:none">
+      <div class="card-title">Location</div>
+      <div id="location-text"></div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="card">
+      <div class="card-title">Quick Actions</div>
+      <div class="action-grid">
+        <button class="btn btn-secondary" onclick="runAction('voice-briefing')">Morning Briefing</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-weather')">Weather</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-screenshot')">Screenshot</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-info')">System Info</button>
+      </div>
+      <button class="btn btn-warning btn-block mt-12" onclick="restartAll()">Restart All Daemons</button>
+    </div>
+  </div>
+
+  <!-- TAB 2: SETTINGS -->
+  <div class="tab-panel" id="tab-settings">
+    <div class="section-header mb-12">
+      <div class="section-title">Settings</div>
+    </div>
+
+    <!-- Wake Word -->
+    <div class="accordion open" id="acc-wake">
+      <div class="accordion-header" onclick="toggleAccordion('acc-wake')">Wake Word</div>
+      <div class="accordion-body">
+        <div class="inline-row">
+          <label>Enabled</label>
+          <label class="toggle"><input type="checkbox" id="s-ww-enabled" checked><span class="slider"></span></label>
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>Detection Threshold</label><span class="range-val" id="s-ww-threshold-val">0.30</span></div>
+          <input type="range" id="s-ww-threshold" min="0.1" max="0.9" step="0.05" value="0.3" oninput="document.getElementById('s-ww-threshold-val').textContent=parseFloat(this.value).toFixed(2)">
+        </div>
+        <div class="form-group">
+          <label>Cooldown (seconds)</label>
+          <input type="number" id="s-ww-cooldown" value="5" min="1" max="30">
+        </div>
+        <div class="form-group">
+          <label>Required Consecutive Detections</label>
+          <input type="number" id="s-ww-consecutive" value="2" min="1" max="5">
+        </div>
+        <div class="form-group">
+          <label>Quiet Hours Start</label>
+          <input type="number" id="s-ww-qstart" value="0" min="0" max="23">
+        </div>
+        <div class="form-group">
+          <label>Quiet Hours End</label>
+          <input type="number" id="s-ww-qend" value="6" min="0" max="23">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="saveWakeWordSettings()">Save Wake Word Settings</button>
+      </div>
+    </div>
+
+    <!-- Voice & STT -->
+    <div class="accordion" id="acc-voice">
+      <div class="accordion-header" onclick="toggleAccordion('acc-voice')">Voice & STT</div>
+      <div class="accordion-body">
+        <div class="form-group">
+          <label>STT Model</label>
+          <div class="radio-group">
+            <div class="radio-btn"><input type="radio" name="stt-model" id="stt-fast" value="tiny"><label for="stt-fast">Fast<br><span class="text-xs text-muted">tiny.en ~3s</span></label></div>
+            <div class="radio-btn"><input type="radio" name="stt-model" id="stt-balanced" value="base" checked><label for="stt-balanced">Balanced<br><span class="text-xs text-muted">base.en ~5s</span></label></div>
+            <div class="radio-btn"><input type="radio" name="stt-model" id="stt-accurate" value="small"><label for="stt-accurate">Accurate<br><span class="text-xs text-muted">small.en ~20s</span></label></div>
+          </div>
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>Listen Duration</label><span class="range-val" id="s-listen-dur-val">7s</span></div>
+          <input type="range" id="s-listen-dur" min="3" max="30" step="1" value="7" oninput="document.getElementById('s-listen-dur-val').textContent=this.value+'s'">
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>Journal Duration</label><span class="range-val" id="s-journal-dur-val">120s</span></div>
+          <input type="range" id="s-journal-dur" min="30" max="180" step="10" value="120" oninput="document.getElementById('s-journal-dur-val').textContent=this.value+'s'">
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>TTS Speed</label><span class="range-val" id="s-tts-rate-val">1.0x</span></div>
+          <input type="range" id="s-tts-rate" min="0.5" max="2.0" step="0.1" value="1.0" oninput="document.getElementById('s-tts-rate-val').textContent=parseFloat(this.value).toFixed(1)+'x'">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="saveVoiceSettings()">Save Voice Settings</button>
+      </div>
+    </div>
+
+    <!-- Claude AI -->
+    <div class="accordion" id="acc-claude">
+      <div class="accordion-header" onclick="toggleAccordion('acc-claude')">Claude AI</div>
+      <div class="accordion-body">
+        <div class="form-group">
+          <label>Model</label>
+          <select id="s-claude-model">
+            <option value="claude-haiku-4-5">Claude Haiku 4.5 (fast)</option>
+            <option value="claude-sonnet-4-5">Claude Sonnet 4.5 (smart)</option>
+          </select>
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>Max Tokens</label><span class="range-val" id="s-claude-tokens-val">1024</span></div>
+          <input type="range" id="s-claude-tokens" min="256" max="2048" step="128" value="1024" oninput="document.getElementById('s-claude-tokens-val').textContent=this.value">
+        </div>
+        <div class="form-group">
+          <label>Tone</label>
+          <div class="radio-group">
+            <div class="radio-btn"><input type="radio" name="claude-tone" id="tone-casual" value="casual" checked><label for="tone-casual">Casual</label></div>
+            <div class="radio-btn"><input type="radio" name="claude-tone" id="tone-pro" value="professional"><label for="tone-pro">Professional</label></div>
+            <div class="radio-btn"><input type="radio" name="claude-tone" id="tone-med" value="medical"><label for="tone-med">Medical</label></div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Response Length</label>
+          <div class="radio-group">
+            <div class="radio-btn"><input type="radio" name="claude-length" id="len-brief" value="brief" checked><label for="len-brief">Brief</label></div>
+            <div class="radio-btn"><input type="radio" name="claude-length" id="len-balanced" value="balanced"><label for="len-balanced">Balanced</label></div>
+            <div class="radio-btn"><input type="radio" name="claude-length" id="len-detailed" value="detailed"><label for="len-detailed">Detailed</label></div>
+          </div>
+        </div>
+        <div class="inline-row">
+          <label>Medical Mode</label>
+          <label class="toggle"><input type="checkbox" id="s-claude-medical" checked><span class="slider"></span></label>
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>Context TTL</label><span class="range-val" id="s-claude-ttl-val">10 min</span></div>
+          <input type="range" id="s-claude-ttl" min="5" max="60" step="5" value="10" oninput="document.getElementById('s-claude-ttl-val').textContent=this.value+' min'">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="saveClaudeSettings()">Save AI Settings</button>
+      </div>
+    </div>
+
+    <!-- API Keys -->
+    <div class="accordion" id="acc-keys">
+      <div class="accordion-header" onclick="toggleAccordion('acc-keys')">API Keys</div>
+      <div class="accordion-body">
+        <div class="form-group">
+          <label>Anthropic API Key</label>
+          <input type="password" id="s-anthropic-key" placeholder="sk-ant-...">
+          <div class="text-xs text-muted mt-8" id="s-anthropic-status"></div>
+        </div>
+        <div class="flex-row mb-12">
+          <button class="btn btn-secondary btn-sm" onclick="testApiKey()" id="btn-test-key">Test Key</button>
+          <button class="btn btn-primary btn-sm" onclick="saveAnthropicKey()">Save Key</button>
+        </div>
+        <div class="form-group">
+          <label>Stripe API Key</label>
+          <input type="password" id="s-stripe-key" placeholder="sk_live_...">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveStripeKey()">Save Stripe Key</button>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="accordion" id="acc-notif">
+      <div class="accordion-header" onclick="toggleAccordion('acc-notif')">Notifications</div>
+      <div class="accordion-body">
+        <div class="inline-row">
+          <label>Shift Alerts</label>
+          <label class="toggle"><input type="checkbox" id="s-notif-shift" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-group" id="shift-alert-mins-group">
+          <label>Minutes Before Shift</label>
+          <input type="number" id="s-notif-shift-mins" value="60" min="5" max="180">
+        </div>
+        <div class="inline-row">
+          <label>Battery Alerts</label>
+          <label class="toggle"><input type="checkbox" id="s-notif-battery" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-group">
+          <label>Battery Alert Threshold (%)</label>
+          <input type="number" id="s-notif-batt-thresh" value="20" min="5" max="50">
+        </div>
+        <div class="inline-row">
+          <label>Location Alerts</label>
+          <label class="toggle"><input type="checkbox" id="s-notif-location" checked><span class="slider"></span></label>
+        </div>
+        <div class="inline-row">
+          <label>Watchdog Alerts</label>
+          <label class="toggle"><input type="checkbox" id="s-notif-watchdog" checked><span class="slider"></span></label>
+        </div>
+        <button class="btn btn-primary btn-block" onclick="saveNotifSettings()">Save Notifications</button>
+      </div>
+    </div>
+
+    <!-- Assistant Personality -->
+    <div class="accordion" id="acc-personality">
+      <div class="accordion-header" onclick="toggleAccordion('acc-personality')">Assistant Personality</div>
+      <div class="accordion-body">
+        <div class="form-group">
+          <label>Your Name</label>
+          <input type="text" id="s-user-name" value="Abdul">
+        </div>
+        <div class="form-group">
+          <label>Wake Trigger Phrase</label>
+          <input type="text" id="s-assistant-name" value="Hey Jarvis">
+        </div>
+        <div class="form-group">
+          <label>Language</label>
+          <select id="s-language">
+            <option value="en">English</option>
+            <option value="ur" disabled>Urdu (coming soon)</option>
+          </select>
+        </div>
+        <div class="inline-row">
+          <label>Proactive Suggestions</label>
+          <label class="toggle"><input type="checkbox" id="s-proactive" checked><span class="slider"></span></label>
+        </div>
+        <button class="btn btn-primary btn-block" onclick="savePersonalitySettings()">Save Personality</button>
+      </div>
+    </div>
+
+    <!-- Location -->
+    <div class="accordion" id="acc-location">
+      <div class="accordion-header" onclick="toggleAccordion('acc-location')">Location</div>
+      <div class="accordion-body">
+        <div class="inline-row">
+          <label>Location Tracking</label>
+          <label class="toggle"><input type="checkbox" id="s-loc-enabled" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-group">
+          <label>Home WiFi SSID</label>
+          <div class="flex-row">
+            <input type="text" id="s-loc-home-wifi" placeholder="Your home WiFi name" style="flex:1">
+            <button class="btn btn-secondary btn-sm" onclick="useCurrentWifi('s-loc-home-wifi')">Use Current</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Hospital WiFi SSID</label>
+          <div class="flex-row">
+            <input type="text" id="s-loc-hospital-wifi" placeholder="Hospital WiFi name" style="flex:1">
+            <button class="btn btn-secondary btn-sm" onclick="useCurrentWifi('s-loc-hospital-wifi')">Use Current</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Hospital Latitude</label>
+          <input type="number" id="s-loc-lat" step="0.0001" value="53.5609">
+        </div>
+        <div class="form-group">
+          <label>Hospital Longitude</label>
+          <input type="number" id="s-loc-lng" step="0.0001" value="-0.0788">
+        </div>
+        <div class="range-row">
+          <div class="range-header"><label>Hospital Radius</label><span class="range-val" id="s-loc-radius-val">500m</span></div>
+          <input type="range" id="s-loc-radius" min="100" max="1000" step="50" value="500" oninput="document.getElementById('s-loc-radius-val').textContent=this.value+'m'">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="saveLocationSettings()">Save Location</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: APPS -->
+  <div class="tab-panel" id="tab-apps">
+    <div class="section-header">
+      <div class="section-title">Voice App Registry</div>
+      <button class="btn btn-primary btn-sm" onclick="showAddAppModal()">+ Add App</button>
+    </div>
+    <div id="apps-list"></div>
+  </div>
+
+  <!-- TAB 4: LOGS -->
+  <div class="tab-panel" id="tab-logs">
+    <div class="section-header mb-8">
+      <div class="section-title">Logs</div>
+    </div>
+    <div class="sub-tabs" id="log-sub-tabs">
+      <button class="sub-tab active" onclick="switchLogTab('errors')">Errors</button>
+      <button class="sub-tab" onclick="switchLogTab('history')">History</button>
+      <button class="sub-tab" onclick="switchLogTab('hey-nothing')">Wake Word</button>
+      <button class="sub-tab" onclick="switchLogTab('shift-monitor')">Shift</button>
+      <button class="sub-tab" onclick="switchLogTab('location-monitor')">Location</button>
+      <button class="sub-tab" onclick="switchLogTab('watchdog')">Watchdog</button>
+      <button class="sub-tab" onclick="switchLogTab('dashboard')">Dashboard</button>
+    </div>
+    <div id="log-content"></div>
+  </div>
+
+  <!-- TAB 5: TOOLS -->
+  <div class="tab-panel" id="tab-tools">
+    <div class="section-header mb-12">
+      <div class="section-title">Tools</div>
+    </div>
+
+    <!-- Daemon Control -->
+    <div class="card">
+      <div class="card-title">Daemon Control</div>
+      <button class="btn btn-warning btn-block mb-12" onclick="restartAll()">Restart All Daemons</button>
+      <div id="daemon-controls"></div>
+    </div>
+
+    <!-- Shift Schedule -->
+    <div class="card">
+      <div class="card-title">Shift Schedule</div>
+      <button class="btn btn-primary btn-sm mb-12" onclick="showAddShiftModal()">+ Add Shift</button>
+      <div id="shifts-list"></div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card">
+      <div class="card-title">Quick Actions</div>
+      <div class="action-grid">
+        <button class="btn btn-secondary" onclick="runAction('voice-briefing')">Morning Briefing</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-weather')">Weather</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-shift')">My Schedule</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-note-list')">Note List</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-history')">Analytics</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-screenshot')">Screenshot</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-info')">System Info</button>
+        <button class="btn btn-secondary" onclick="runAction('voice-calendar')">Calendar</button>
+      </div>
+    </div>
+
+    <!-- Data Management -->
+    <div class="card">
+      <div class="card-title">Data Management</div>
+      <button class="btn btn-secondary btn-block mb-8" onclick="confirmAction('Clear Claude conversation history?',clearClaudeHistory)">Clear Conversation History</button>
+      <button class="btn btn-secondary btn-block mb-8" onclick="confirmAction('Clear command history?',clearCommandHistory)">Clear Command History</button>
+      <button class="btn btn-danger btn-block" onclick="confirmAction('Clear ALL logs? This cannot be undone.',clearAllLogs)">Clear All Logs</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Bottom Navigation -->
+<nav class="nav">
+  <button class="nav-btn active" onclick="switchTab('home',this)"><span class="icon">&#127968;</span>Home</button>
+  <button class="nav-btn" onclick="switchTab('settings',this)"><span class="icon">&#9881;</span>Settings</button>
+  <button class="nav-btn" onclick="switchTab('apps',this)"><span class="icon">&#128241;</span>Apps</button>
+  <button class="nav-btn" onclick="switchTab('logs',this)"><span class="icon">&#128203;</span>Logs</button>
+  <button class="nav-btn" onclick="switchTab('tools',this)"><span class="icon">&#128295;</span>Tools</button>
+</nav>
+
+<script>
+/* ── State ─────────────────────────────────────── */
+let settings = {};
+let currentTab = 'home';
+let currentLogTab = 'errors';
+let statusInterval = null;
+let logInterval = null;
+
+/* ── Tab switching ─────────────────────────────── */
+function switchTab(tab, btn) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // Load tab data
+  if (tab === 'home') loadStatus();
+  if (tab === 'settings') loadSettings();
+  if (tab === 'apps') loadApps();
+  if (tab === 'logs') loadLogTab(currentLogTab);
+  if (tab === 'tools') { loadDaemonControls(); loadShifts(); }
+  // Scroll to top
+  document.getElementById('app').scrollTop = 0;
+}
+
+/* ── Toast ─────────────────────────────────────── */
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => t.className = 'toast', 2500);
+}
+
+/* ── Modal ─────────────────────────────────────── */
+function showModal(html) {
+  document.getElementById('modal-content').innerHTML = html;
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal() {
+  document.getElementById('modal').classList.remove('show');
+}
+
+/* ── Confirm dialog ────────────────────────────── */
+function confirmAction(msg, fn) {
+  showModal(
+    '<div class="modal-title">Confirm</div>' +
+    '<p style="margin-bottom:16px;color:var(--accent2)">' + msg + '</p>' +
+    '<div class="flex-row">' +
+    '<button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-danger" style="flex:1" onclick="closeModal();(' + fn.toString() + ')()">Confirm</button>' +
+    '</div>'
+  );
+}
+
+/* ── API helpers ───────────────────────────────── */
+async function api(url, opts) {
+  try {
+    const r = await fetch(url, opts);
+    return await r.json();
+  } catch (e) {
+    toast('Network error: ' + e.message, 'error');
+    return null;
+  }
+}
+async function apiPost(url, body) {
+  return api(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+}
+
+/* ── Accordion ─────────────────────────────────── */
+function toggleAccordion(id) {
+  document.getElementById(id).classList.toggle('open');
+}
+
+/* ── HOME TAB ──────────────────────────────────── */
+async function loadStatus() {
+  const data = await api('/api/status');
+  if (!data) return;
+
+  // Wake word status
+  const ww = data.daemons['hey-nothing'];
+  const dot = document.getElementById('wake-dot');
+  const label = document.getElementById('wake-label');
+  const sub = document.getElementById('wake-sublabel');
+  if (ww && ww.running) {
+    dot.style.background = 'var(--success)';
+    dot.style.boxShadow = '0 0 12px var(--success)';
+    label.textContent = 'Listening';
+    const stats = data.assistant.wake_word_stats;
+    sub.textContent = stats ? stats.triggers + ' triggers, ' + stats.cycles + ' cycles' : '';
+  } else {
+    dot.style.background = 'var(--danger)';
+    dot.style.boxShadow = '0 0 12px var(--danger)';
+    label.textContent = 'Stopped';
+    sub.textContent = 'Wake word daemon not running';
+  }
+
+  // Daemon pills
+  const pills = document.getElementById('daemon-pills');
+  pills.innerHTML = '';
+  const daemonNames = ['hey-nothing', 'shift-monitor', 'location-monitor', 'watchdog'];
+  daemonNames.forEach(name => {
+    const d = data.daemons[name];
+    const on = d && d.running;
+    pills.innerHTML += '<div class="pill"><span class="dot ' + (on ? 'on' : 'off') + '"></span>' +
+      name + '</div>';
+  });
+
+  // System info
+  const sys = data.system;
+  if (sys.battery) {
+    const bl = sys.battery.level;
+    const icon = bl > 80 ? '100' : bl > 60 ? '80' : bl > 40 ? '60' : bl > 20 ? '40' : '20';
+    document.getElementById('battery-val').textContent = bl + '%';
+    document.getElementById('battery-val').style.color =
+      bl < 20 ? 'var(--danger)' : bl < 40 ? 'var(--warning)' : 'var(--success)';
+  }
+  document.getElementById('wifi-val').textContent = sys.wifi ? sys.wifi.ssid.replace(/<[^>]+>/g, '') : '--';
+  document.getElementById('storage-val').textContent = sys.storage ? sys.storage.free : '--';
+  document.getElementById('cmds-val').textContent = data.assistant.commands_today || 0;
+
+  // Shift status
+  document.getElementById('shift-status-text').textContent =
+    data.assistant.shift_status || 'No shift info';
+
+  // Location
+  if (data.assistant.location) {
+    document.getElementById('location-card').style.display = 'block';
+    const loc = data.assistant.location;
+    document.getElementById('location-text').textContent =
+      loc.label || loc.type || 'Unknown';
+  }
+}
+
+/* ── SETTINGS TAB ──────────────────────────────── */
+async function loadSettings() {
+  const data = await api('/api/settings');
+  if (!data) return;
+  settings = data;
+
+  // Wake word
+  const ww = data.wake_word || {};
+  document.getElementById('s-ww-enabled').checked = ww.enabled !== false;
+  document.getElementById('s-ww-threshold').value = ww.threshold || 0.3;
+  document.getElementById('s-ww-threshold-val').textContent = parseFloat(ww.threshold || 0.3).toFixed(2);
+  document.getElementById('s-ww-cooldown').value = ww.cooldown || 5;
+  document.getElementById('s-ww-consecutive').value = ww.required_consecutive || 2;
+  document.getElementById('s-ww-qstart').value = ww.quiet_hours_start || 0;
+  document.getElementById('s-ww-qend').value = ww.quiet_hours_end || 6;
+
+  // Voice
+  const v = data.voice || {};
+  document.querySelector('input[name="stt-model"][value="' + (v.stt_model || 'base') + '"]').checked = true;
+  document.getElementById('s-listen-dur').value = v.listen_duration_default || 7;
+  document.getElementById('s-listen-dur-val').textContent = (v.listen_duration_default || 7) + 's';
+  document.getElementById('s-journal-dur').value = v.journal_duration || 120;
+  document.getElementById('s-journal-dur-val').textContent = (v.journal_duration || 120) + 's';
+  document.getElementById('s-tts-rate').value = v.tts_rate || 1.0;
+  document.getElementById('s-tts-rate-val').textContent = parseFloat(v.tts_rate || 1.0).toFixed(1) + 'x';
+
+  // Claude
+  const c = data.claude || {};
+  document.getElementById('s-claude-model').value = c.model || 'claude-haiku-4-5';
+  document.getElementById('s-claude-tokens').value = c.max_tokens || 1024;
+  document.getElementById('s-claude-tokens-val').textContent = c.max_tokens || 1024;
+  const tone = c.tone || 'casual';
+  document.querySelector('input[name="claude-tone"][value="' + tone + '"]').checked = true;
+  const len = c.response_length || 'brief';
+  document.querySelector('input[name="claude-length"][value="' + len + '"]').checked = true;
+  document.getElementById('s-claude-medical').checked = c.medical_mode !== false;
+  document.getElementById('s-claude-ttl').value = c.context_ttl_minutes || 10;
+  document.getElementById('s-claude-ttl-val').textContent = (c.context_ttl_minutes || 10) + ' min';
+
+  // API Keys
+  const keys = await api('/api/keys/status');
+  if (keys) {
+    document.getElementById('s-anthropic-status').textContent = keys.anthropic ? 'Current: ' + keys.anthropic : 'No key configured';
+    document.getElementById('s-anthropic-key').placeholder = keys.anthropic || 'sk-ant-...';
+  }
+
+  // Notifications
+  const n = data.notifications || {};
+  document.getElementById('s-notif-shift').checked = n.shift_alerts !== false;
+  document.getElementById('s-notif-shift-mins').value = n.shift_alert_minutes_before || 60;
+  document.getElementById('s-notif-battery').checked = n.battery_alerts !== false;
+  document.getElementById('s-notif-batt-thresh').value = n.battery_alert_threshold || 20;
+  document.getElementById('s-notif-location').checked = n.location_alerts !== false;
+  document.getElementById('s-notif-watchdog').checked = n.watchdog_alerts !== false;
+
+  // Personality
+  const a = data.assistant || {};
+  document.getElementById('s-user-name').value = a.user_name || 'Abdul';
+  document.getElementById('s-assistant-name').value = a.name || 'Hey Jarvis';
+  document.getElementById('s-language').value = a.language || 'en';
+  document.getElementById('s-proactive').checked = a.proactive_suggestions !== false;
+
+  // Location
+  const l = data.location || {};
+  document.getElementById('s-loc-enabled').checked = l.enabled !== false;
+  document.getElementById('s-loc-home-wifi').value = l.home_wifi || '';
+  document.getElementById('s-loc-hospital-wifi').value = l.hospital_wifi || '';
+  document.getElementById('s-loc-lat').value = l.hospital_lat || 53.5609;
+  document.getElementById('s-loc-lng').value = l.hospital_lng || -0.0788;
+  document.getElementById('s-loc-radius').value = l.hospital_radius_meters || 500;
+  document.getElementById('s-loc-radius-val').textContent = (l.hospital_radius_meters || 500) + 'm';
+}
+
+function gatherAllSettings() {
+  return {
+    wake_word: {
+      enabled: document.getElementById('s-ww-enabled').checked,
+      threshold: parseFloat(document.getElementById('s-ww-threshold').value),
+      cooldown: parseInt(document.getElementById('s-ww-cooldown').value),
+      required_consecutive: parseInt(document.getElementById('s-ww-consecutive').value),
+      quiet_hours_start: parseInt(document.getElementById('s-ww-qstart').value),
+      quiet_hours_end: parseInt(document.getElementById('s-ww-qend').value)
+    },
+    voice: {
+      stt_model: document.querySelector('input[name="stt-model"]:checked').value,
+      tts_rate: parseFloat(document.getElementById('s-tts-rate').value),
+      listen_duration_default: parseInt(document.getElementById('s-listen-dur').value),
+      journal_duration: parseInt(document.getElementById('s-journal-dur').value)
+    },
+    claude: {
+      model: document.getElementById('s-claude-model').value,
+      max_tokens: parseInt(document.getElementById('s-claude-tokens').value),
+      tone: document.querySelector('input[name="claude-tone"]:checked').value,
+      response_length: document.querySelector('input[name="claude-length"]:checked').value,
+      medical_mode: document.getElementById('s-claude-medical').checked,
+      context_ttl_minutes: parseInt(document.getElementById('s-claude-ttl').value),
+      context_turns: (settings.claude || {}).context_turns || 10
+    },
+    notifications: {
+      shift_alerts: document.getElementById('s-notif-shift').checked,
+      shift_alert_minutes_before: parseInt(document.getElementById('s-notif-shift-mins').value),
+      battery_alerts: document.getElementById('s-notif-battery').checked,
+      battery_alert_threshold: parseInt(document.getElementById('s-notif-batt-thresh').value),
+      location_alerts: document.getElementById('s-notif-location').checked,
+      watchdog_alerts: document.getElementById('s-notif-watchdog').checked
+    },
+    location: {
+      enabled: document.getElementById('s-loc-enabled').checked,
+      home_wifi: document.getElementById('s-loc-home-wifi').value,
+      hospital_wifi: document.getElementById('s-loc-hospital-wifi').value,
+      hospital_lat: parseFloat(document.getElementById('s-loc-lat').value),
+      hospital_lng: parseFloat(document.getElementById('s-loc-lng').value),
+      hospital_radius_meters: parseInt(document.getElementById('s-loc-radius').value)
+    },
+    assistant: {
+      name: document.getElementById('s-assistant-name').value,
+      user_name: document.getElementById('s-user-name').value,
+      language: document.getElementById('s-language').value,
+      proactive_suggestions: document.getElementById('s-proactive').checked
+    }
+  };
+}
+
+async function saveAllSettings() {
+  const data = gatherAllSettings();
+  const r = await apiPost('/api/settings', data);
+  if (r && r.status === 'saved') {
+    settings = data;
+    toast('Settings saved', 'success');
+  }
+}
+
+async function saveWakeWordSettings() { await saveAllSettings(); }
+async function saveVoiceSettings() { await saveAllSettings(); }
+async function saveClaudeSettings() { await saveAllSettings(); }
+async function saveNotifSettings() { await saveAllSettings(); }
+async function savePersonalitySettings() { await saveAllSettings(); }
+async function saveLocationSettings() { await saveAllSettings(); }
+
+async function testApiKey() {
+  const btn = document.getElementById('btn-test-key');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  const r = await apiPost('/api/keys/test');
+  btn.disabled = false;
+  btn.textContent = 'Test Key';
+  if (r) {
+    const el = document.getElementById('s-anthropic-status');
+    if (r.valid) {
+      el.innerHTML = '<span class="text-success">Valid - API key works</span>';
+    } else {
+      el.innerHTML = '<span class="text-danger">Invalid: ' + (r.error || 'unknown error') + '</span>';
+    }
+  }
+}
+
+async function saveAnthropicKey() {
+  const key = document.getElementById('s-anthropic-key').value.trim();
+  if (!key) { toast('Enter a key first', 'error'); return; }
+  const r = await apiPost('/api/keys/anthropic', { key });
+  if (r && r.status === 'saved') {
+    toast('API key saved', 'success');
+    document.getElementById('s-anthropic-key').value = '';
+    loadSettings();
+  }
+}
+
+async function saveStripeKey() {
+  const key = document.getElementById('s-stripe-key').value.trim();
+  if (!key) { toast('Enter a key first', 'error'); return; }
+  const r = await apiPost('/api/keys/stripe', { key });
+  if (r && r.status === 'saved') {
+    toast('Stripe key saved', 'success');
+    document.getElementById('s-stripe-key').value = '';
+  }
+}
+
+async function useCurrentWifi(inputId) {
+  const r = await api('/api/wifi/current');
+  if (r && r.ssid) {
+    document.getElementById(inputId).value = r.ssid;
+    toast('WiFi: ' + r.ssid);
+  } else {
+    toast('Could not get WiFi info', 'error');
+  }
+}
+
+/* ── APPS TAB ──────────────────────────────────── */
+async function loadApps() {
+  const data = await api('/api/apps');
+  if (!data) return;
+  const el = document.getElementById('apps-list');
+  if (!data.apps.length) {
+    el.innerHTML = '<div class="text-muted text-sm" style="padding:20px;text-align:center">No apps registered</div>';
+    return;
+  }
+  el.innerHTML = data.apps.map(app =>
+    '<div class="app-card">' +
+      '<div class="info">' +
+        '<div class="name">' + esc(app.name) + '</div>' +
+        '<div class="pkg">' + esc(app.package) + '</div>' +
+        '<div class="keywords">' + app.keywords.map(k => '<span class="chip">' + esc(k) + '</span>').join('') + '</div>' +
+      '</div>' +
+      '<button class="btn btn-danger btn-sm" onclick="confirmAction(\'Remove ' + esc(app.name) + '?\',()=>removeApp(\'' + esc(app.package) + '\'))">Del</button>' +
+    '</div>'
+  ).join('');
+}
+
+function showAddAppModal() {
+  showModal(
+    '<div class="modal-title">Add App</div>' +
+    '<div class="form-group"><label>Voice Keyword</label><input type="text" id="new-app-name" placeholder="e.g. twitter"></div>' +
+    '<div class="form-group"><label>Package Name</label><input type="text" id="new-app-pkg" placeholder="e.g. com.twitter.android"></div>' +
+    '<div class="flex-row">' +
+    '<button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" style="flex:1" onclick="addApp()">Add</button>' +
+    '</div>'
+  );
+}
+
+async function addApp() {
+  const name = document.getElementById('new-app-name').value.trim();
+  const pkg = document.getElementById('new-app-pkg').value.trim();
+  if (!name || !pkg) { toast('Fill in both fields', 'error'); return; }
+  const r = await apiPost('/api/apps', { name, package: pkg });
+  if (r && r.status === 'added') {
+    closeModal();
+    toast('App added', 'success');
+    loadApps();
+  }
+}
+
+async function removeApp(pkg) {
+  const r = await api('/api/apps/' + encodeURIComponent(pkg), { method: 'DELETE' });
+  if (r) { toast('App removed', 'success'); loadApps(); }
+}
+
+/* ── LOGS TAB ──────────────────────────────────── */
+function switchLogTab(tab) {
+  currentLogTab = tab;
+  document.querySelectorAll('#log-sub-tabs .sub-tab').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadLogTab(tab);
+}
+
+async function loadLogTab(tab) {
+  const el = document.getElementById('log-content');
+  if (tab === 'errors') {
+    const data = await api('/api/errors');
+    if (!data) return;
+    if (!data.errors.length) {
+      el.innerHTML = '<div class="text-muted text-sm" style="padding:20px;text-align:center">No errors found</div>';
+      return;
+    }
+    el.innerHTML = data.errors.map(e =>
+      '<div class="error-card">' +
+        '<div class="source">' + esc(e.source) + '</div>' +
+        '<div class="msg">' + esc(e.line) + '</div>' +
+        '<div class="ts">' + esc(e.timestamp) + '</div>' +
+      '</div>'
+    ).join('') +
+    '<button class="btn btn-danger btn-block mt-12" onclick="confirmAction(\'Clear all logs?\',clearAllLogs)">Clear All Errors</button>';
+  } else if (tab === 'history') {
+    const data = await api('/api/history?limit=100');
+    if (!data) return;
+    let html = '<input type="text" placeholder="Search commands..." oninput="filterHistory(this.value)" style="margin-bottom:12px">';
+    if (!data.commands.length) {
+      html += '<div class="text-muted text-sm" style="padding:20px;text-align:center">No command history</div>';
+    } else {
+      html += '<div id="history-rows">' + data.commands.map(c =>
+        '<div class="cmd-row" data-text="' + esc(c.text.toLowerCase()) + '">' +
+          '<span class="time">' + esc(c.datetime.split(' ')[1] || '') + '</span>' +
+          '<span class="text">' + esc(c.text) + '</span>' +
+          '<span class="route-badge">' + esc(c.routed_to) + '</span>' +
+        '</div>'
+      ).join('') + '</div>';
+    }
+    html += '<button class="btn btn-secondary btn-block mt-12" onclick="confirmAction(\'Clear command history?\',clearCommandHistory)">Clear History</button>';
+    el.innerHTML = html;
+  } else {
+    const data = await api('/api/logs/' + tab + '?limit=200');
+    if (!data) return;
+    let html = '';
+    if (!data.exists) {
+      html = '<div class="text-muted text-sm" style="padding:20px;text-align:center">Log file does not exist</div>';
+    } else if (!data.lines.length) {
+      html = '<div class="text-muted text-sm" style="padding:20px;text-align:center">Log is empty</div>';
+    } else {
+      html = '<div class="log-container">' + data.lines.map(line => {
+        const low = line.toLowerCase();
+        let cls = '';
+        if (low.includes('error') || low.includes('fatal') || low.includes('failed')) cls = 'error';
+        else if (low.includes('warning') || low.includes('warn')) cls = 'warning';
+        else if (low.includes('started') || low.includes('success') || low.includes('trigger')) cls = 'success';
+        return '<div class="log-line ' + cls + '">' + esc(line) + '</div>';
+      }).join('') + '</div>';
+      html += '<div class="text-xs text-muted mt-8">Showing ' + data.lines.length + ' of ' + data.total + ' lines</div>';
+    }
+    html += '<div class="flex-row mt-12"><button class="btn btn-secondary btn-sm" onclick="loadLogTab(\'' + tab + '\')">Refresh</button>';
+    html += '<button class="btn btn-danger btn-sm" onclick="confirmAction(\'Clear ' + tab + ' log?\',()=>clearLog(\'' + tab + '\'))">Clear</button></div>';
+    el.innerHTML = html;
+  }
+}
+
+function filterHistory(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#history-rows .cmd-row').forEach(row => {
+    row.style.display = row.dataset.text.includes(q) ? '' : 'none';
+  });
+}
+
+async function clearLog(name) {
+  await apiPost('/api/logs/' + name + '/clear');
+  toast('Log cleared', 'success');
+  loadLogTab(currentLogTab);
+}
+
+/* ── TOOLS TAB ─────────────────────────────────── */
+async function loadDaemonControls() {
+  const data = await api('/api/status');
+  if (!data) return;
+  const el = document.getElementById('daemon-controls');
+  const names = ['hey-nothing', 'shift-monitor', 'location-monitor', 'watchdog'];
+  el.innerHTML = names.map(name => {
+    const d = data.daemons[name];
+    const on = d && d.running;
+    return '<div class="daemon-card">' +
+      '<div class="daemon-header">' +
+        '<span class="dot ' + (on ? 'on' : 'off') + '"></span>' +
+        '<span class="name">' + name + '</span>' +
+        '<span class="text-xs text-muted">' + (on ? 'PID ' + d.pid : 'stopped') + '</span>' +
+      '</div>' +
+      '<div class="daemon-actions">' +
+        (on ?
+          '<button class="btn btn-danger btn-sm" onclick="daemonAction(\'' + name + '\',\'stop\')">Stop</button>' +
+          '<button class="btn btn-warning btn-sm" onclick="daemonAction(\'' + name + '\',\'restart\')">Restart</button>' :
+          '<button class="btn btn-success btn-sm" onclick="daemonAction(\'' + name + '\',\'start\')">Start</button>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function daemonAction(name, action) {
+  toast(action.charAt(0).toUpperCase() + action.slice(1) + 'ing ' + name + '...');
+  const r = await apiPost('/api/daemon/' + name + '/' + action);
+  if (r) {
+    toast(name + ' ' + (r.status || action + 'ed'), 'success');
+    setTimeout(() => { loadDaemonControls(); loadStatus(); }, 1000);
+  }
+}
+
+async function restartAll() {
+  toast('Restarting all daemons...');
+  const r = await apiPost('/api/daemon/restart-all');
+  if (r) {
+    toast('All daemons restarted', 'success');
+    setTimeout(() => { loadDaemonControls(); loadStatus(); }, 2000);
+  }
+}
+
+async function loadShifts() {
+  const data = await api('/api/shifts');
+  if (!data) return;
+  const el = document.getElementById('shifts-list');
+  const shifts = (data.shifts || []).filter(s => s.date >= new Date().toISOString().split('T')[0]);
+  if (!shifts.length) {
+    el.innerHTML = '<div class="text-muted text-sm">No upcoming shifts</div>';
+    return;
+  }
+  el.innerHTML = shifts.slice(0, 14).map(s => {
+    const d = new Date(s.date + 'T00:00:00');
+    const dayName = d.toLocaleDateString('en', { weekday: 'short' });
+    const dayNum = d.getDate();
+    const month = d.toLocaleDateString('en', { month: 'short' });
+    return '<div class="shift-card">' +
+      '<div class="shift-date"><div class="day">' + dayNum + '</div><div class="month">' + month + '</div></div>' +
+      '<div class="shift-info">' +
+        '<span class="shift-type ' + s.type + '">' + s.type + '</span>' +
+        '<span style="margin-left:8px;font-size:12px;color:var(--accent2)">' + dayName + '</span>' +
+        '<div class="shift-time">' + s.start + ' - ' + s.end + (s.location ? ' at ' + s.location : '') + '</div>' +
+      '</div>' +
+      '<button class="btn btn-danger btn-sm" onclick="confirmAction(\'Delete shift on ' + s.date + '?\',()=>deleteShift(\'' + s.date + '\'))">Del</button>' +
+    '</div>';
+  }).join('');
+}
+
+function showAddShiftModal() {
+  const today = new Date().toISOString().split('T')[0];
+  showModal(
+    '<div class="modal-title">Add Shift</div>' +
+    '<div class="form-group"><label>Date</label><input type="date" id="new-shift-date" value="' + today + '"></div>' +
+    '<div class="form-group"><label>Type</label>' +
+      '<div class="radio-group">' +
+        '<div class="radio-btn"><input type="radio" name="shift-type" id="st-day" value="day" checked><label for="st-day">Day</label></div>' +
+        '<div class="radio-btn"><input type="radio" name="shift-type" id="st-night" value="night"><label for="st-night">Night</label></div>' +
+      '</div></div>' +
+    '<div class="form-group"><label>Start Time</label><input type="time" id="new-shift-start" value="08:00"></div>' +
+    '<div class="form-group"><label>End Time</label><input type="time" id="new-shift-end" value="20:00"></div>' +
+    '<div class="form-group"><label>Location</label><input type="text" id="new-shift-loc" value="ED"></div>' +
+    '<div class="flex-row">' +
+    '<button class="btn btn-secondary" style="flex:1" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" style="flex:1" onclick="addShift()">Add</button>' +
+    '</div>'
+  );
+}
+
+async function addShift() {
+  const shift = {
+    date: document.getElementById('new-shift-date').value,
+    type: document.querySelector('input[name="shift-type"]:checked').value,
+    start: document.getElementById('new-shift-start').value,
+    end: document.getElementById('new-shift-end').value,
+    location: document.getElementById('new-shift-loc').value
+  };
+  if (!shift.date) { toast('Pick a date', 'error'); return; }
+  const r = await apiPost('/api/shifts', shift);
+  if (r && r.status === 'added') {
+    closeModal();
+    toast('Shift added', 'success');
+    loadShifts();
+  }
+}
+
+async function deleteShift(date) {
+  const r = await api('/api/shifts/' + date, { method: 'DELETE' });
+  if (r) { toast('Shift deleted', 'success'); loadShifts(); }
+}
+
+/* ── Quick actions ─────────────────────────────── */
+async function runAction(script) {
+  toast('Launching ' + script + '...');
+  const r = await apiPost('/api/action/' + script);
+  if (r) {
+    if (r.output) {
+      toast(r.output.substring(0, 100) || 'Launched!', 'success');
+    } else {
+      toast('Launched!', 'success');
+    }
+  }
+}
+
+/* ── Data management ───────────────────────────── */
+async function clearClaudeHistory() {
+  const r = await apiPost('/api/data/clear-claude-history');
+  if (r) toast('Conversation history cleared', 'success');
+}
+async function clearCommandHistory() {
+  const r = await apiPost('/api/history/clear');
+  if (r) toast('Command history cleared', 'success');
+}
+async function clearAllLogs() {
+  const r = await apiPost('/api/data/clear-all-logs');
+  if (r) { toast('All logs cleared', 'success'); loadLogTab(currentLogTab); }
+}
+
+/* ── Utility ───────────────────────────────────── */
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/* ── Auto-refresh with Page Visibility ─────────── */
+function startPolling() {
+  stopPolling();
+  statusInterval = setInterval(() => {
+    if (currentTab === 'home') loadStatus();
+  }, 10000);
+  logInterval = setInterval(() => {
+    if (currentTab === 'logs') loadLogTab(currentLogTab);
+  }, 30000);
+}
+
+function stopPolling() {
+  if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+  if (logInterval) { clearInterval(logInterval); logInterval = null; }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopPolling();
+  else startPolling();
+});
+
+/* ── Service Worker Registration ───────────────── */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+/* ── Init ──────────────────────────────────────── */
+loadStatus();
+startPolling();
+</script>
+</body>
+</html>

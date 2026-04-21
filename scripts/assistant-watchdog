@@ -99,6 +99,11 @@ while true; do
         "$HOME/.location-monitor.pid" \
         "nohup $HOME/bin/voice-location-monitor > /dev/null 2>&1 &"
 
+    # Check dashboard server
+    check_and_restart "dashboard" \
+        "$HOME/.dashboard.pid" \
+        "nohup python3 $HOME/dashboard/server.py >> $HOME/logs/dashboard.log 2>&1 &"
+
     # Reapply OOM protection
     protect_oom
 
