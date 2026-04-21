@@ -2,7 +2,6 @@
 # Voice-controlled phone calls — dial a contact or end a call
 # Requires: CALL_PHONE permission granted to Termux:API or Termux
 
-set -e
 
 # Accept pre-captured text as $1 or listen fresh
 if [ -n "$1" ]; then

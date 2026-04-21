@@ -1,7 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-search through notes, show matches
 
-set -e
 
 NOTES_DIR="$HOME/notes"
 

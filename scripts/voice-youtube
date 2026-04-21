@@ -1,7 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-controlled YouTube search (Whisper backend)
 
-set -e
 
 urlencode() {
     python3 -c "import urllib.parse, sys; print(urllib.parse.quote_plus(sys.argv[1]))" "$1"

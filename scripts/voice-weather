@@ -2,7 +2,6 @@
 # Voice-controlled weather readout using wttr.in
 # Supports: current weather, tomorrow forecast, rain/umbrella check, temperature, wind
 
-set -e
 
 CITY="Faisalabad"
 

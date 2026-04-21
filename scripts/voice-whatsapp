@@ -9,7 +9,6 @@
 #
 # Requires: termux-api (notification access), root (for am/input commands)
 
-set -e
 
 if [ -n "$1" ]; then
     TEXT="$1"

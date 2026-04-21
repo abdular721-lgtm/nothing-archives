@@ -1,7 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-controlled app launcher (Whisper backend)
 
-set -e
 
 declare -A APPS=(
     ["whatsapp"]="com.whatsapp/.Main"

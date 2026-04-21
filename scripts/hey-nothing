@@ -242,8 +242,20 @@ try:
 
                 log(f"WAKE WORD detected! score={score:.3f} (trigger #{stats['triggers']})")
 
-                # Kill any stuck TTS before queuing — prevents Termux:API queue buildup
-                subprocess.run(['pkill', '-f', 'termux-tts-speak'], capture_output=True)
+                # Kill shell-level TTS processes
+                killed = subprocess.run(
+                    ['pkill', '-f', 'termux-tts-speak'], capture_output=True
+                )
+                # Force-stop Termux:API to clear its INTERNAL TTS queue.
+                # pkill only kills the shell script — the broadcast already
+                # delivered to Termux:API's Java TTS engine stays queued.
+                # force-stop wipes that queue so the next TTS call is instant.
+                if killed.returncode == 0:  # found and killed stuck TTS
+                    subprocess.run(
+                        ['su', 'shell', '-c', 'am force-stop com.termux.api'],
+                        capture_output=True
+                    )
+                    time.sleep(0.8)  # Termux:API cold-start time
 
                 # Acknowledge — short TTS "Yes?"
                 subprocess.Popen(

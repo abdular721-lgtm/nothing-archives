@@ -1,0 +1,19 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Robust TTS wrapper — lives in ~/bin/ which is before /usr/bin/ in PATH.
+# Intercepts ALL termux-tts-speak calls from all voice scripts.
+# Clears Termux:API's internal TTS queue before speaking to prevent hangs.
+
+REAL_TTS=/data/data/com.termux/files/usr/bin/termux-tts-speak
+
+# Check for stuck TTS processes (match the REAL binary path, not this wrapper)
+if /data/data/com.termux/files/usr/bin/pgrep -f "usr/bin/termux-tts-speak" > /dev/null 2>&1; then
+    # Kill shell-level TTS processes
+    /data/data/com.termux/files/usr/bin/pkill -f "usr/bin/termux-tts-speak" 2>/dev/null
+    # Force-stop Termux:API to clear its internal TTS queue.
+    # Killing the shell script alone does NOT cancel the broadcast already
+    # delivered to Termux:API's Java TTS queue — force-stop is required.
+    su shell -c 'am force-stop com.termux.api' 2>/dev/null
+    sleep 0.8
+fi
+
+exec "$REAL_TTS" "$@"

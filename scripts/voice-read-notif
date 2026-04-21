@@ -2,7 +2,6 @@
 # Read latest WhatsApp notification aloud via TTS
 # Requires: Termux:API notification access granted in Android Settings
 
-set -e
 
 # Accept pre-captured text as $1 (from voice router) — not used for logic here
 # but accepted for consistency with other voice-* scripts

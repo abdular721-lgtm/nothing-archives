@@ -3,7 +3,6 @@
 # Uses background sleep + TTS + notification. Persists via ~/notes/reminders.json.
 # On Termux boot, restore-reminders.py re-spawns pending timers.
 
-set -e
 
 REMINDERS_DIR="$HOME/notes"
 REMINDERS_LOG="$REMINDERS_DIR/reminders.log"

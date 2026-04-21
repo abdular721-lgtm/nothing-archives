@@ -2,7 +2,6 @@
 # Voice-activated system info readouts — speaks results via TTS
 # Targets: time, date, battery, charging, wifi name, storage, ip address, signal
 
-set -e
 
 # Accept pre-captured text as $1 (from voice router) or listen fresh
 if [ -n "$1" ]; then

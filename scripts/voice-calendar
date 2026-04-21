@@ -7,7 +7,6 @@
 #
 # Uses Android content provider (content://com.android.calendar) via root
 
-set -e
 
 if [ -n "$1" ]; then
     TEXT="$1"

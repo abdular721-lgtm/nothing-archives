@@ -2,7 +2,6 @@
 # Read RCS/Google Messages from bugle_db (root required)
 # Falls back to conversation snippets if parts.text is empty
 
-set -e
 
 SQLITE3="/data/data/com.termux/files/usr/bin/sqlite3"
 BUGLE="/data/data/com.google.android.apps.messaging/databases/bugle_db"

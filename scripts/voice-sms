@@ -3,7 +3,6 @@
 # Tries RCS (Google Messages bugle_db) first, falls back to traditional SMS
 # Requires: SMS + Contacts permissions granted to Termux:API, root for RCS
 
-set -e
 
 SQLITE3="/data/data/com.termux/files/usr/bin/sqlite3"
 

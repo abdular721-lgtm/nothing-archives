@@ -1,7 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-dictated note taker — one file per note, saved to ~/notes/
 
-set -e
 
 NOTES_DIR="$HOME/notes"
 mkdir -p "$NOTES_DIR"
