@@ -1,0 +1,458 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""
+voice-claude — Claude API integration for voice assistant
+Sends voice input to Claude API with tool definitions
+Claude decides: answer directly OR execute a tool
+"""
+import warnings
+warnings.filterwarnings("ignore")
+
+import os
+import sys
+import json
+import subprocess
+import urllib.request
+import urllib.error
+import time
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path.home()
+API_KEY_FILE = HOME / ".anthropic_key"
+HISTORY_FILE = HOME / ".voice-claude-history.json"
+LOG_FILE = HOME / "logs" / "voice-claude.log"
+HISTORY_TTL = 600  # 10 minutes
+
+LOG_FILE.parent.mkdir(exist_ok=True)
+
+def log(msg):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+def say(text):
+    log(f"TTS: {text}")
+    subprocess.run(["termux-tts-speak", text])
+
+# Load API key
+if not API_KEY_FILE.exists():
+    say("Claude API key not configured")
+    sys.exit(1)
+
+API_KEY = API_KEY_FILE.read_text().strip()
+if not API_KEY:
+    say("Claude API key is empty")
+    sys.exit(1)
+
+def load_history():
+    if HISTORY_FILE.exists():
+        try:
+            data = json.loads(HISTORY_FILE.read_text())
+            if time.time() - data.get("timestamp", 0) < HISTORY_TTL:
+                return data.get("messages", [])
+        except Exception:
+            pass
+    return []
+
+def save_history(messages):
+    try:
+        HISTORY_FILE.write_text(json.dumps({
+            "timestamp": time.time(),
+            "messages": messages[-10:]
+        }))
+    except Exception:
+        pass
+
+def clear_history():
+    HISTORY_FILE.unlink(missing_ok=True)
+
+TOOLS = [
+    {
+        "name": "set_alarm",
+        "description": "Set an alarm on the phone. Use when user wants to wake up at a time or be reminded at a specific time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "time_phrase": {"type": "string", "description": "Natural language time like 7:30 AM, seven thirty, 6 AM tomorrow"},
+                "label": {"type": "string", "description": "Label for the alarm e.g. Wake up, Medication, Meeting"}
+            },
+            "required": ["time_phrase"]
+        }
+    },
+    {
+        "name": "open_app",
+        "description": "Open an app on the phone.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "app_name": {"type": "string", "description": "Name of the app to open"}
+            },
+            "required": ["app_name"]
+        }
+    },
+    {
+        "name": "search_youtube",
+        "description": "Search YouTube for a video or song.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query for YouTube"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "play_music",
+        "description": "Play, pause, skip music or search for a song/artist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["play", "pause", "next", "previous", "search"], "description": "Music action"},
+                "query": {"type": "string", "description": "Song or artist to search for (only for search action)"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "toggle_setting",
+        "description": "Toggle a phone setting on or off: wifi, bluetooth, data, airplane mode, flashlight, volume, brightness, dark mode, DND.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "setting": {"type": "string", "description": "Setting to toggle"},
+                "state": {"type": "string", "enum": ["on", "off", "toggle", "up", "down", "max", "min"], "description": "Desired state"}
+            },
+            "required": ["setting", "state"]
+        }
+    },
+    {
+        "name": "set_reminder",
+        "description": "Set a reminder that fires after a duration or at a specific time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "What to remind about"},
+                "time_phrase": {"type": "string", "description": "When to remind e.g. in 20 minutes, at 3pm"}
+            },
+            "required": ["message", "time_phrase"]
+        }
+    },
+    {
+        "name": "get_weather",
+        "description": "Get current weather or forecast.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Weather query e.g. today, tomorrow, rain"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "take_screenshot",
+        "description": "Take a screenshot of the current screen.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "make_call",
+        "description": "Call a contact by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_name": {"type": "string", "description": "Name of the contact to call"}
+            },
+            "required": ["contact_name"]
+        }
+    },
+    {
+        "name": "send_sms",
+        "description": "Send an SMS or WhatsApp message to a contact.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_name": {"type": "string", "description": "Name of the contact"},
+                "message": {"type": "string", "description": "Message text to send"},
+                "platform": {"type": "string", "enum": ["sms", "whatsapp"], "description": "Platform to send on"}
+            },
+            "required": ["contact_name", "message"]
+        }
+    },
+    {
+        "name": "read_notifications",
+        "description": "Read latest notifications aloud.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "App to read from e.g. whatsapp, all"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "get_system_info",
+        "description": "Get phone info: battery, time, date, wifi, storage, IP.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "info_type": {"type": "string", "description": "Type of info: battery, time, date, wifi, storage, ip"}
+            },
+            "required": ["info_type"]
+        }
+    },
+    {
+        "name": "run_macro",
+        "description": "Run a multi-action macro: goodnight, good morning, commute, focus, presentation, normal.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "macro": {"type": "string", "enum": ["goodnight", "good morning", "commute mode", "focus mode", "presentation mode", "normal mode"], "description": "Which macro to run"}
+            },
+            "required": ["macro"]
+        }
+    },
+    {
+        "name": "save_note",
+        "description": "Save a voice-dictated note.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Title of the note"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "get_calendar",
+        "description": "Read calendar events.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {"type": "string", "enum": ["today", "tomorrow", "week", "next"], "description": "Time period to check"}
+            },
+            "required": ["period"]
+        }
+    },
+    {
+        "name": "daily_briefing",
+        "description": "Give a daily briefing: time, battery, weather, calendar, notifications.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "length": {"type": "string", "enum": ["full", "short"], "description": "Briefing length"}
+            },
+            "required": []
+        }
+    }
+]
+
+SYSTEM_PROMPT = """You are Abdul's personal voice assistant running on his Nothing Phone 2a.
+
+Abdul is an emergency medicine doctor (MRCEM) and solo app developer based in the UK, currently working at Diana Princess of Wales Hospital in Grimsby. He is Pakistani. He builds Android apps and web platforms independently.
+
+Your job:
+1. Understand natural language voice commands
+2. Either answer directly (for questions, conversation) OR use a tool (for actions)
+3. Keep spoken responses CONCISE — this is voice output, not text
+4. Be direct and helpful — no fluff
+5. Use tools when the user wants to DO something on the phone
+6. Answer directly when the user asks a question
+
+Response rules:
+- Keep answers under 3 sentences for voice output
+- For tool calls: confirm what you're doing in 1 short sentence
+- Never say "I'll use the X tool" — say what you're doing naturally
+- Example: "Setting alarm for 7 AM" not "I'll use the set_alarm tool"
+
+Abdul's context:
+- Wife's birthday: 27 January
+- Wedding anniversary: 26 April
+- Works night and day shifts at the ED
+- Commutes via Stagecoach bus
+- Apps: ReviseMRCEM, ReviseFCPS1, DocOnCall, ClinCalc Pro, PhantomGrid, Pet Cal, CarryMate
+- Location: Grimsby/Cleethorpes area, England
+
+Always respond as if speaking — short, natural, conversational."""
+
+def call_claude_api(messages, tools=TOOLS):
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 1024,
+        "system": SYSTEM_PROMPT,
+        "tools": tools,
+        "messages": messages
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": API_KEY,
+            "anthropic-version": "2023-06-01"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            log(f"API response: stop_reason={result.get('stop_reason')}, usage={result.get('usage')}")
+            return result
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8")
+        raise Exception(f"API error {e.code}: {error_body}")
+    except urllib.error.URLError as e:
+        raise Exception(f"Network error: {e.reason}")
+
+def execute_tool(tool_name, tool_input):
+    scripts = {
+        "set_alarm": ("~/bin/voice-alarm", tool_input.get("time_phrase", "")),
+        "open_app": ("~/bin/voice-open", tool_input.get("app_name", "")),
+        "search_youtube": ("~/bin/voice-youtube", tool_input.get("query", "")),
+        "play_music": ("~/bin/voice-music", f"{tool_input.get('action', 'play')} {tool_input.get('query', '')}".strip()),
+        "toggle_setting": ("~/bin/voice-toggle", f"{tool_input.get('setting', '')} {tool_input.get('state', '')}"),
+        "set_reminder": ("~/bin/voice-reminder", f"remind me {tool_input.get('time_phrase', '')} to {tool_input.get('message', '')}"),
+        "get_weather": ("~/bin/voice-weather", tool_input.get("query", "today")),
+        "take_screenshot": ("~/bin/voice-screenshot", ""),
+        "make_call": ("~/bin/voice-call", tool_input.get("contact_name", "")),
+        "send_sms": ("~/bin/voice-sms", f"send {tool_input.get('platform', 'sms')} {tool_input.get('contact_name', '')} {tool_input.get('message', '')}"),
+        "read_notifications": ("~/bin/voice-read-notif", tool_input.get("app", "whatsapp")),
+        "get_system_info": ("~/bin/voice-info", tool_input.get("info_type", "battery")),
+        "run_macro": ("~/bin/voice-macro", tool_input.get("macro", "")),
+        "save_note": ("~/bin/voice-note", tool_input.get("title", "")),
+        "get_calendar": ("~/bin/voice-calendar", tool_input.get("period", "today")),
+        "daily_briefing": ("~/bin/voice-briefing", tool_input.get("length", "full")),
+    }
+    if tool_name not in scripts:
+        return f"Unknown tool: {tool_name}"
+
+    script_path, arg = scripts[tool_name]
+    script_path = os.path.expanduser(script_path)
+    log(f"Executing: {script_path} {arg}")
+
+    try:
+        cmd = [script_path, arg] if arg else [script_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        output = result.stdout.strip() or "Done"
+        log(f"Tool result: {output[:200]}")
+        return output
+    except subprocess.TimeoutExpired:
+        return "Command timed out"
+    except Exception as e:
+        return f"Error: {e}"
+
+def process_response(response, messages):
+    content = response.get("content", [])
+    stop_reason = response.get("stop_reason", "")
+
+    text_parts = []
+    tool_calls = []
+
+    for block in content:
+        if block.get("type") == "text":
+            text = block.get("text", "").strip()
+            if text:
+                text_parts.append(text)
+        elif block.get("type") == "tool_use":
+            tool_calls.append(block)
+
+    # Speak text response first
+    if text_parts:
+        say(" ".join(text_parts))
+
+    # Execute tool calls
+    if tool_calls and stop_reason == "tool_use":
+        tool_results = []
+        for tc in tool_calls:
+            tool_name = tc.get("name")
+            tool_input = tc.get("input", {})
+            tool_id = tc.get("id")
+            log(f"Tool call: {tool_name}({json.dumps(tool_input)})")
+
+            result = execute_tool(tool_name, tool_input)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": result
+            })
+
+        messages.append({"role": "assistant", "content": content})
+        messages.append({"role": "user", "content": tool_results})
+
+        # Get follow-up from Claude after tool execution
+        follow_up = call_claude_api(messages)
+        follow_content = follow_up.get("content", [])
+        for block in follow_content:
+            if block.get("type") == "text":
+                text = block.get("text", "").strip()
+                if text:
+                    say(text)
+        messages.append({"role": "assistant", "content": follow_content})
+    else:
+        messages.append({"role": "assistant", "content": content})
+
+    return messages
+
+def main():
+    # Get input text
+    if len(sys.argv) > 1:
+        user_text = " ".join(sys.argv[1:]).strip()
+    else:
+        # Listen for input
+        try:
+            result = subprocess.run(
+                [os.path.expanduser("~/bin/whisper-listen"), "7"],
+                capture_output=True, text=True, timeout=15
+            )
+            user_text = result.stdout.strip()
+        except Exception:
+            user_text = ""
+
+    if not user_text:
+        say("I didn't catch that")
+        sys.exit(1)
+
+    log(f"Input: {user_text}")
+
+    # Special commands
+    lower = user_text.lower()
+    if any(kw in lower for kw in ["clear history", "forget conversation", "new conversation"]):
+        clear_history()
+        say("Conversation cleared")
+        sys.exit(0)
+
+    # Load conversation history
+    messages = load_history()
+    messages.append({"role": "user", "content": user_text})
+
+    # Check network (HTTPError means server was reached — that's fine)
+    try:
+        urllib.request.urlopen("https://api.anthropic.com", timeout=3)
+    except urllib.error.HTTPError:
+        pass  # Server reached, network is fine
+    except (urllib.error.URLError, OSError):
+        say("No internet. Running offline.")
+        log("No network — falling back to offline router")
+        subprocess.run([os.path.expanduser("~/bin/voice"), user_text])
+        sys.exit(0)
+
+    # Call Claude API
+    try:
+        response = call_claude_api(messages)
+        messages = process_response(response, messages)
+        save_history(messages)
+    except Exception as e:
+        log(f"API error: {e}")
+        say("Claude API error. Trying offline.")
+        subprocess.run([os.path.expanduser("~/bin/voice"), user_text])
+
+if __name__ == "__main__":
+    main()

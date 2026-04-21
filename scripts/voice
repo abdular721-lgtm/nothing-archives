@@ -150,9 +150,7 @@ elif [[ "$T" == *"what did"* && "$T" == *"do"* ]] || [[ "$T" == *"last action"* 
     exec ~/bin/voice-context last
 
 else
-    MSG="I didn't understand: $TEXT"
-    echo "⚠️  $MSG"
-    termux-toast "$MSG"
-    termux-tts-speak "$MSG" 2>/dev/null &
-    exit 1
+    # No keyword match — send to Claude API for intelligent handling
+    echo "→ voice-claude (no keyword match)"
+    exec ~/bin/voice-claude "$TEXT"
 fi
