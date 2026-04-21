@@ -135,7 +135,7 @@ def get_settings():
 
 @app.route('/api/settings', methods=['POST'])
 def save_settings():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     atomic_write(SETTINGS_FILE, data)
     apply_settings(data)
     return jsonify({"status": "saved"})
@@ -357,7 +357,7 @@ def restart_all():
         cmd = DAEMON_COMMANDS[name]["start"].format(home=HOME)
         subprocess.Popen(cmd, shell=True, start_new_session=True,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(1)
+        time.sleep(2)  # stagger starts to avoid OOM on phone
     return jsonify({"status": "all restarted"})
 
 
@@ -445,7 +445,7 @@ def get_apps():
 @app.route('/api/apps', methods=['POST'])
 def add_app():
     """Add a new app keyword to voice-open."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     name = data.get("name", "").lower().strip()
     package = data.get("package", "").strip()
     if not name or not package:
@@ -489,7 +489,7 @@ def get_shifts():
 
 @app.route('/api/shifts', methods=['POST'])
 def add_shift():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     shifts_data = {"shifts": []}
     if SHIFTS_FILE.exists():
         try:
@@ -564,7 +564,7 @@ def test_api_key():
 
 @app.route('/api/keys/anthropic', methods=['POST'])
 def save_anthropic_key():
-    key = request.json.get("key", "").strip()
+    key = (request.get_json(silent=True) or {}).get("key", "").strip()
     if not key:
         return jsonify({"error": "Empty key"}), 400
     ANTHROPIC_KEY_FILE.write_text(key)
@@ -574,7 +574,7 @@ def save_anthropic_key():
 
 @app.route('/api/keys/stripe', methods=['POST'])
 def save_stripe_key():
-    key = request.json.get("key", "").strip()
+    key = (request.get_json(silent=True) or {}).get("key", "").strip()
     if not key:
         return jsonify({"error": "Empty key"}), 400
     STRIPE_KEY_FILE.write_text(key)
@@ -675,9 +675,7 @@ SAFE_ACTIONS = frozenset([
 def run_action(script):
     if script not in SAFE_ACTIONS:
         return jsonify({"error": "Script not allowed"}), 403
-    arg = ""
-    if request.json:
-        arg = request.json.get("arg", "")
+    arg = (request.get_json(silent=True) or {}).get("arg", "")
     try:
         cmd = [str(HOME / "bin" / "run-voice"), str(HOME / "bin" / script)]
         if arg:
@@ -727,7 +725,16 @@ def handle_error(e):
 
 
 if __name__ == "__main__":
+    import ssl
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     (HOME / ".dashboard.pid").write_text(str(os.getpid()))
-    print("Dashboard running at http://0.0.0.0:8080")
-    app.run(host="0.0.0.0", port=8080, debug=False, threaded=True)
+    cert_file = HOME / "dashboard" / "cert.pem"
+    key_file = HOME / "dashboard" / "key.pem"
+    if cert_file.exists() and key_file.exists():
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(cert_file), str(key_file))
+        print("Dashboard running at https://0.0.0.0:8080 (SSL)")
+        app.run(host="0.0.0.0", port=8080, debug=False, threaded=True, ssl_context=ctx)
+    else:
+        print("Dashboard running at http://0.0.0.0:8080 (no SSL certs found)")
+        app.run(host="0.0.0.0", port=8080, debug=False, threaded=True)
