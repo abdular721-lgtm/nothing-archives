@@ -1,11 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Fixed-duration speech-to-text using whisper.cpp
-# Model: base.en (142MB, ~5.4s transcription on Dimensity 7200 Pro)
-# Fallback: tiny.en (~2.7s, lower accuracy) auto-selected if base.en >10s
+# Models (Dimensity 7200 Pro benchmarks on 5s audio):
+#   tiny.en  (75MB)  — ~3s,  low accuracy    (wake word only)
+#   base.en  (142MB) — ~5-7s, good accuracy  (default for commands)
+#   small.en (466MB) — ~20s,  best accuracy   (dictation, proper nouns)
 #
 # Usage: whisper-listen [--fast|--accurate] [--energy-gate THRESHOLD] [DURATION]
-#   --fast              Force tiny.en regardless of benchmark
-#   --accurate          Force base.en regardless of benchmark
+#   --fast              Force tiny.en (wake word speed)
+#   --accurate          Force small.en (best accuracy, slow)
 #   --energy-gate N     Skip whisper if audio RMS < N (0-32768). 500 = good silence threshold.
 #   DURATION            Recording duration in seconds (default 5)
 
@@ -20,7 +22,7 @@ ENERGY_GATE=0
 while [[ "$1" == --* ]]; do
     case "$1" in
         --fast)         FORCE_MODEL="tiny.en"; shift ;;
-        --accurate)     FORCE_MODEL="base.en"; shift ;;
+        --accurate)     FORCE_MODEL="small.en"; shift ;;
         --energy-gate)  ENERGY_GATE="${2:-500}"; shift 2 ;;
         *)              shift ;;  # ignore unknown flags
     esac

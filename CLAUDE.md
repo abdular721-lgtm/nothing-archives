@@ -18,7 +18,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 ```
 
 - **Single entry point**: `~/bin/voice` (unified router)
-- **STT engine**: `~/bin/whisper-listen` (whisper.cpp base.en for commands, tiny.en for wake word)
+- **STT engine**: `~/bin/whisper-listen` (whisper.cpp: tiny.en for wake word, base.en default for commands, small.en via --accurate for dictation)
 - **Wake word**: `~/bin/hey-nothing` (whisper polling daemon, ~7.5s cycle)
 - **Daemon control**: `~/bin/hey-nothing-ctl` (start/stop/status/restart)
 - **TTS**: `termux-tts-speak` (synchronous, use `say()` helper)
@@ -48,7 +48,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 | Script | Description |
 |--------|-------------|
 | `voice` | Unified router — listen once, route to sub-script by keyword |
-| `whisper-listen` | Record + transcribe with whisper.cpp. Flags: `--fast` (tiny.en), `--accurate` (base.en), `--energy-gate N` |
+| `whisper-listen` | Record + transcribe with whisper.cpp. Flags: `--fast` (tiny.en ~3s), `--accurate` (small.en ~20s), `--energy-gate N`. Default: base.en ~5-7s |
 | `run-voice` | Detached script runner — prevents OOM on SSH |
 | `voice-context` | Shared context store (write/read/clear/last). 10min TTL. |
 
@@ -131,7 +131,7 @@ termux-torch on|off
 ~/notes/reminders.json        — active reminders
 ~/logs/                       — script execution logs
 ~/whisper.cpp/                — whisper binary and models
-~/whisper.cpp/models/         — ggml-base.en.bin, ggml-tiny.en.bin
+~/whisper.cpp/models/         — ggml-tiny.en.bin (75MB), ggml-base.en.bin (142MB), ggml-small.en.bin (466MB)
 ~/.cache/                     — temporary audio files
 ~/.voice-context.json         — conversation context (10min TTL)
 ~/.hey-nothing.pid            — daemon PID file
