@@ -1,0 +1,209 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""
+voice-location-monitor — Background location awareness daemon
+Checks WiFi SSID every 2 minutes, triggers location-based automations.
+GPS fallback only when WiFi SSID is unrecognised.
+"""
+import warnings
+warnings.filterwarnings("ignore")
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG_FILE = HOME / ".location-config.json"
+PID_FILE = HOME / ".location-monitor.pid"
+LOG_FILE = HOME / "logs" / "location.log"
+
+LOG_FILE.parent.mkdir(exist_ok=True)
+
+DEFAULT_CONFIG = {
+    "home_wifi": "",
+    "hospital_wifi": "",
+    "hospital_lat": 0.0,
+    "hospital_lng": 0.0,
+    "hospital_radius_meters": 500,
+    "last_location": "unknown",
+    "enabled": True,
+}
+
+def log(msg):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+def load_config():
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text())
+            # Merge defaults for missing keys
+            for k, v in DEFAULT_CONFIG.items():
+                data.setdefault(k, v)
+            return data
+        except Exception:
+            pass
+    return dict(DEFAULT_CONFIG)
+
+def save_config(config):
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+def get_wifi_ssid():
+    """Get current WiFi SSID via termux-wifi-connectioninfo."""
+    try:
+        result = subprocess.run(
+            ["termux-wifi-connectioninfo"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            ssid = data.get("ssid", "")
+            if ssid and ssid != "<unknown ssid>":
+                return ssid
+    except Exception:
+        pass
+    return ""
+
+def get_gps_location():
+    """Get GPS coordinates (battery-expensive — use sparingly)."""
+    try:
+        result = subprocess.run(
+            ["termux-location", "-p", "network", "-r", "once"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            return data.get("latitude", 0), data.get("longitude", 0)
+    except Exception:
+        pass
+    return 0, 0
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Distance between two GPS points in meters."""
+    import math
+    R = 6371000  # Earth radius in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+def run_macro(macro_name):
+    """Run a voice macro."""
+    try:
+        subprocess.Popen(
+            [os.path.expanduser("~/bin/voice-macro"), macro_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        log(f"Failed to run macro '{macro_name}': {e}")
+
+def say(text):
+    subprocess.Popen(
+        ["termux-tts-speak", text],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+def detect_location(config):
+    """Detect current location based on WiFi SSID (GPS fallback)."""
+    ssid = get_wifi_ssid()
+
+    if ssid and config["home_wifi"] and ssid == config["home_wifi"]:
+        return "home"
+
+    if ssid and config["hospital_wifi"] and ssid == config["hospital_wifi"]:
+        return "hospital"
+
+    # GPS fallback for hospital detection (only if hospital coords configured)
+    if config["hospital_lat"] != 0 and config["hospital_lng"] != 0:
+        lat, lon = get_gps_location()
+        if lat != 0 and lon != 0:
+            dist = haversine_distance(lat, lon, config["hospital_lat"], config["hospital_lng"])
+            if dist <= config["hospital_radius_meters"]:
+                return "hospital"
+
+    if ssid:
+        return "transit"  # Connected to unknown WiFi
+    return "unknown"
+
+# PID file and signal handling
+PID_FILE.write_text(str(os.getpid()))
+
+def handle_signal(sig, frame):
+    log("Location monitor stopping")
+    PID_FILE.unlink(missing_ok=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, handle_signal)
+signal.signal(signal.SIGINT, handle_signal)
+
+log(f"Location monitor started (PID={os.getpid()})")
+
+# Debounce: require same location for 2 consecutive checks
+last_detected = None
+consecutive_count = 0
+DEBOUNCE_THRESHOLD = 2
+
+try:
+    while True:
+        config = load_config()
+
+        if not config.get("enabled", True):
+            time.sleep(120)
+            continue
+
+        if not config["home_wifi"] and not config["hospital_wifi"]:
+            # Not configured — sleep longer
+            time.sleep(300)
+            continue
+
+        current = detect_location(config)
+        previous = config.get("last_location", "unknown")
+
+        if current == last_detected:
+            consecutive_count += 1
+        else:
+            consecutive_count = 1
+            last_detected = current
+
+        # Only trigger on confirmed location change (debounced)
+        if current != previous and consecutive_count >= DEBOUNCE_THRESHOLD:
+            log(f"Location changed: {previous} → {current}")
+            config["last_location"] = current
+            save_config(config)
+
+            if current == "home":
+                log("Arrived home — running normal mode")
+                say("Welcome home. Normal mode activated.")
+                run_macro("normal mode")
+
+            elif current == "hospital":
+                log("Arrived at hospital — running focus mode")
+                say("Arrived at hospital. Focus mode activated.")
+                run_macro("focus mode")
+
+            elif current == "transit" and previous == "home":
+                log("Left home — running commute mode")
+                say("Commute mode activated.")
+                run_macro("commute mode")
+
+        time.sleep(120)  # Check every 2 minutes
+
+except Exception as e:
+    log(f"Fatal error: {e}")
+finally:
+    PID_FILE.unlink(missing_ok=True)
+    log("Location monitor stopped")

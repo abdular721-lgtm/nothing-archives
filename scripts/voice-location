@@ -1,0 +1,138 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""
+voice-location — Manual location queries and configuration.
+
+Usage:
+  voice-location "where am I"
+  voice-location "set home wifi"
+  voice-location "set hospital wifi"
+"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+CONFIG_FILE = Path.home() / ".location-config.json"
+
+DEFAULT_CONFIG = {
+    "home_wifi": "",
+    "hospital_wifi": "",
+    "hospital_lat": 0.0,
+    "hospital_lng": 0.0,
+    "hospital_radius_meters": 500,
+    "last_location": "unknown",
+    "enabled": True,
+}
+
+def say(text):
+    print(text, flush=True)
+    subprocess.Popen(
+        ["termux-tts-speak", text],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+def load_config():
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text())
+            for k, v in DEFAULT_CONFIG.items():
+                data.setdefault(k, v)
+            return data
+        except Exception:
+            pass
+    return dict(DEFAULT_CONFIG)
+
+def save_config(config):
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+def get_wifi_ssid():
+    try:
+        result = subprocess.run(
+            ["termux-wifi-connectioninfo"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            ssid = data.get("ssid", "")
+            if ssid and ssid != "<unknown ssid>":
+                return ssid
+    except Exception:
+        pass
+    return ""
+
+def where_am_i():
+    config = load_config()
+    ssid = get_wifi_ssid()
+    last = config.get("last_location", "unknown")
+
+    if ssid:
+        if config["home_wifi"] and ssid == config["home_wifi"]:
+            say(f"You're at home. Connected to {ssid}.")
+        elif config["hospital_wifi"] and ssid == config["hospital_wifi"]:
+            say(f"You're at the hospital. Connected to {ssid}.")
+        else:
+            say(f"You're connected to {ssid}. Location: {last}.")
+    else:
+        say(f"Not connected to WiFi. Last known location: {last}.")
+
+def set_home_wifi():
+    ssid = get_wifi_ssid()
+    if not ssid:
+        say("You're not connected to WiFi. Connect to your home WiFi first.")
+        return
+
+    config = load_config()
+    config["home_wifi"] = ssid
+    save_config(config)
+    say(f"Home WiFi set to {ssid}.")
+
+def set_hospital_wifi():
+    ssid = get_wifi_ssid()
+    if not ssid:
+        say("You're not connected to WiFi. Connect to the hospital WiFi first.")
+        return
+
+    config = load_config()
+    config["hospital_wifi"] = ssid
+    save_config(config)
+    say(f"Hospital WiFi set to {ssid}.")
+
+def handle_query(text):
+    t = text.lower().strip()
+
+    if "where" in t or "location" in t or "am i" in t:
+        where_am_i()
+        return
+
+    if "set home" in t or "home wifi" in t:
+        set_home_wifi()
+        return
+
+    if "set hospital" in t or "hospital wifi" in t:
+        set_hospital_wifi()
+        return
+
+    if "disable" in t or "off" in t:
+        config = load_config()
+        config["enabled"] = False
+        save_config(config)
+        say("Location automation disabled.")
+        return
+
+    if "enable" in t or "on" in t:
+        config = load_config()
+        config["enabled"] = True
+        save_config(config)
+        say("Location automation enabled.")
+        return
+
+    where_am_i()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
+    else:
+        query = "where am i"
+    handle_query(query)

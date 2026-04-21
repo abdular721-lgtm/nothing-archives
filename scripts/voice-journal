@@ -1,0 +1,280 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""
+voice-journal — Voice diary with sentiment tracking
+Records entries, reads them back, searches, and generates weekly summaries.
+
+Usage:
+  voice-journal "new entry"       — record a journal entry (120s listen)
+  voice-journal "read today"      — read today's journal entries
+  voice-journal "weekly summary"  — Claude summarises last 7 days
+  voice-journal "how have I been" — sentiment trend analysis
+  voice-journal "search [topic]"  — search journal entries
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+import urllib.error
+from datetime import datetime, timedelta
+from pathlib import Path
+
+JOURNAL_DIR = Path.home() / "journal"
+JOURNAL_DIR.mkdir(exist_ok=True)
+API_KEY_FILE = Path.home() / ".anthropic_key"
+
+def say(text):
+    print(text, flush=True)
+    subprocess.Popen(
+        ["termux-tts-speak", text],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+def get_api_key():
+    try:
+        return API_KEY_FILE.read_text().strip()
+    except Exception:
+        return None
+
+def call_claude(prompt, max_tokens=512):
+    """Quick Claude API call for summaries and sentiment."""
+    api_key = get_api_key()
+    if not api_key:
+        return None
+    payload = json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+        data = json.loads(resp.read())
+        return data["content"][0]["text"]
+    except Exception as e:
+        print(f"Claude API error: {e}")
+        return None
+
+def get_journal_path(date=None):
+    if date is None:
+        date = datetime.now()
+    return JOURNAL_DIR / f"{date.strftime('%Y-%m-%d')}.md"
+
+def record_entry():
+    """Record a new journal entry using whisper-listen --accurate."""
+    say("Start speaking your journal entry. You have two minutes.")
+
+    try:
+        result = subprocess.run(
+            [os.path.expanduser("~/bin/whisper-listen"), "--accurate", "120"],
+            capture_output=True, text=True, timeout=150,
+        )
+        text = result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        text = ""
+    except Exception as e:
+        say(f"Recording failed: {e}")
+        return
+
+    if not text:
+        say("I didn't hear anything. Journal entry cancelled.")
+        return
+
+    now = datetime.now()
+    journal_path = get_journal_path(now)
+    time_str = now.strftime("%H:%M")
+    date_str = now.strftime("%Y-%m-%d")
+
+    # Get sentiment from Claude (non-blocking — save entry regardless)
+    sentiment = ""
+    claude_resp = call_claude(
+        f"Rate the emotional sentiment of this journal entry on a scale of 1-5 "
+        f"(1=very negative, 3=neutral, 5=very positive). Reply with ONLY a single digit.\n\n"
+        f"Entry: {text}"
+    )
+    if claude_resp and claude_resp.strip() in "12345":
+        sentiment = f"\n*sentiment: {claude_resp.strip()}/5*"
+
+    # Build entry
+    entry = f"\n### {time_str}\n{text}{sentiment}\n"
+
+    # Create or append to day file
+    if journal_path.exists():
+        with open(journal_path, "a") as f:
+            f.write(entry)
+    else:
+        with open(journal_path, "w") as f:
+            f.write(f"## {date_str}\n{entry}")
+
+    word_count = len(text.split())
+    say(f"Journal entry saved. {word_count} words recorded{', sentiment ' + claude_resp.strip() + ' out of 5' if sentiment else ''}.")
+
+def read_today():
+    """Read today's journal entries aloud."""
+    journal_path = get_journal_path()
+    if not journal_path.exists():
+        say("No journal entries for today yet.")
+        return
+
+    content = journal_path.read_text().strip()
+    # Count entries
+    entries = content.count("### ")
+    say(f"You have {entries} journal entr{'ies' if entries != 1 else 'y'} today.")
+
+    # Read each entry (skip the date header)
+    lines = content.split("\n")
+    for line in lines:
+        if line.startswith("### "):
+            say(f"At {line[4:]}:")
+        elif line.strip() and not line.startswith("##") and not line.startswith("*sentiment"):
+            say(line)
+
+def weekly_summary():
+    """Claude summarises last 7 days of journal entries."""
+    now = datetime.now()
+    all_text = []
+    days_with_entries = 0
+
+    for i in range(7):
+        date = now - timedelta(days=i)
+        path = get_journal_path(date)
+        if path.exists():
+            content = path.read_text().strip()
+            all_text.append(content)
+            days_with_entries += 1
+
+    if not all_text:
+        say("No journal entries in the past week.")
+        return
+
+    combined = "\n\n---\n\n".join(all_text)
+    prompt = (
+        f"Summarise these journal entries from the past week in 3-4 sentences. "
+        f"Note the emotional tone and any recurring themes. Be warm and supportive. "
+        f"Speak directly to the person (use 'you').\n\n{combined}"
+    )
+
+    say(f"Analysing {days_with_entries} days of journal entries...")
+    summary = call_claude(prompt, max_tokens=256)
+    if summary:
+        say(summary)
+    else:
+        say("Couldn't generate summary. Check your internet connection.")
+
+def sentiment_trend():
+    """Analyse sentiment trends from journal entries."""
+    now = datetime.now()
+    sentiments = []
+
+    for i in range(14):  # Look back 2 weeks
+        date = now - timedelta(days=i)
+        path = get_journal_path(date)
+        if path.exists():
+            content = path.read_text()
+            # Extract sentiment scores
+            scores = re.findall(r'\*sentiment: (\d)/5\*', content)
+            if scores:
+                avg = sum(int(s) for s in scores) / len(scores)
+                sentiments.append((date.strftime("%A %d %b"), avg, len(scores)))
+
+    if not sentiments:
+        say("No sentiment data found. Record some journal entries first.")
+        return
+
+    # Build summary
+    overall_avg = sum(s[1] for s in sentiments) / len(sentiments)
+    recent = sentiments[0] if sentiments else None
+    mood_word = {1: "struggling", 2: "low", 3: "okay", 4: "good", 5: "great"}
+
+    msg = f"Over the past {len(sentiments)} days with entries, your average mood is {overall_avg:.1f} out of 5."
+    if recent:
+        msg += f" Most recently on {recent[0]}, your mood was {recent[1]:.1f}."
+
+    nearest = round(overall_avg)
+    if nearest in mood_word:
+        msg += f" Overall, you've been feeling {mood_word[nearest]}."
+
+    say(msg)
+
+def search_journal(query):
+    """Search journal entries for a topic."""
+    if not query:
+        say("What should I search for?")
+        return
+
+    results = []
+    for path in sorted(JOURNAL_DIR.glob("*.md"), reverse=True):
+        content = path.read_text()
+        if query.lower() in content.lower():
+            # Find the specific entry
+            date = path.stem
+            entries = content.split("### ")
+            for entry in entries[1:]:  # Skip header
+                if query.lower() in entry.lower():
+                    time_line = entry.split("\n")[0]
+                    text_lines = [l for l in entry.split("\n")[1:] if l.strip() and not l.startswith("*sentiment")]
+                    results.append((date, time_line, " ".join(text_lines)[:200]))
+
+    if results:
+        say(f"Found {len(results)} entr{'ies' if len(results) != 1 else 'y'} about {query}.")
+        for date, time, text in results[:3]:  # Read top 3
+            say(f"On {date} at {time}: {text}")
+    else:
+        say(f"No journal entries found about {query}.")
+
+def handle_query(text):
+    t = text.lower().strip()
+
+    # New entry
+    if any(w in t for w in ["new entry", "journal entry", "record", "log my", "log thought", "start journal", "write journal"]):
+        record_entry()
+        return
+
+    # Read today
+    if "read" in t and ("today" in t or "journal" in t):
+        read_today()
+        return
+
+    # Weekly summary
+    if "week" in t and ("summary" in t or "summar" in t):
+        weekly_summary()
+        return
+
+    # Sentiment / how have I been
+    if any(w in t for w in ["sentiment", "how have i", "how am i", "feeling", "mood"]):
+        sentiment_trend()
+        return
+
+    # Search
+    if "search" in t or "find" in t or "about" in t:
+        # Extract search query
+        for prefix in ["search journal for ", "search for ", "search ", "find ", "about "]:
+            if t.startswith(prefix):
+                query = t[len(prefix):].strip()
+                search_journal(query)
+                return
+        # Try to extract after "journal" keyword
+        parts = t.split("journal")
+        if len(parts) > 1:
+            search_journal(parts[-1].strip())
+            return
+
+    # Default: start a new entry
+    record_entry()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
+    else:
+        query = "new entry"
+    handle_query(query)

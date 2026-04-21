@@ -1,0 +1,109 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# assistant-watchdog — Restarts dead assistant processes every 5 minutes
+# Also refreshes OOM protection and foreground notification.
+
+LOG="$HOME/logs/watchdog.log"
+mkdir -p "$HOME/logs"
+
+timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
+
+log_msg() {
+    echo "[$(timestamp)] $1" >> "$LOG"
+}
+
+check_and_restart() {
+    local name=$1
+    local pid_file=$2
+    local start_cmd=$3
+
+    if [ -f "$pid_file" ]; then
+        local pid
+        pid=$(cat "$pid_file")
+        if kill -0 "$pid" 2>/dev/null; then
+            return 0  # running
+        else
+            log_msg "$name died (stale PID $pid) — restarting"
+            rm -f "$pid_file"
+            eval "$start_cmd"
+            sleep 2
+            if [ -f "$pid_file" ]; then
+                log_msg "$name restarted (PID $(cat "$pid_file"))"
+            else
+                log_msg "$name FAILED to restart"
+            fi
+        fi
+    else
+        log_msg "$name not running (no PID file) — starting"
+        eval "$start_cmd"
+        sleep 2
+        if [ -f "$pid_file" ]; then
+            log_msg "$name started (PID $(cat "$pid_file"))"
+        else
+            log_msg "$name FAILED to start"
+        fi
+    fi
+}
+
+# Protect Termux from OOM killer (reapply — kernel resets on process changes)
+protect_oom() {
+    local tpid
+    tpid=$(pgrep -f com.termux | head -1)
+    if [ -n "$tpid" ]; then
+        su -c "echo -1000 > /proc/$tpid/oom_score_adj" 2>/dev/null
+    fi
+}
+
+# Refresh foreground notification with live status
+refresh_notification() {
+    local status_line=""
+    if [ -f "$HOME/.hey-nothing.pid" ] && kill -0 "$(cat "$HOME/.hey-nothing.pid")" 2>/dev/null; then
+        status_line="Hey Jarvis listening"
+    else
+        status_line="Wake word OFFLINE"
+    fi
+
+    local shift_info=""
+    shift_info=$("$HOME/bin/voice-shift" --summary 2>/dev/null | head -c 80)
+    if [ -n "$shift_info" ]; then
+        status_line="$status_line | $shift_info"
+    fi
+
+    termux-notification --ongoing \
+        --title "Voice Assistant Active" \
+        --content "$status_line" \
+        --id 1 \
+        --priority high \
+        > /dev/null 2>&1
+}
+
+# Write our own PID file
+echo $$ > "$HOME/.watchdog.pid"
+log_msg "Watchdog started (PID=$$)"
+
+# Trap for clean shutdown
+trap 'log_msg "Watchdog stopping"; rm -f "$HOME/.watchdog.pid"; exit 0' SIGTERM SIGINT
+
+while true; do
+    # Check hey-nothing wake word daemon
+    check_and_restart "hey-nothing" \
+        "$HOME/.hey-nothing.pid" \
+        "nohup python3 $HOME/bin/hey-nothing > $HOME/logs/hey-nothing.log 2>&1 &"
+
+    # Check shift monitor
+    check_and_restart "shift-monitor" \
+        "$HOME/.shift-monitor.pid" \
+        "nohup $HOME/bin/shift-monitor > /dev/null 2>&1 &"
+
+    # Check location monitor
+    check_and_restart "location-monitor" \
+        "$HOME/.location-monitor.pid" \
+        "nohup $HOME/bin/voice-location-monitor > /dev/null 2>&1 &"
+
+    # Reapply OOM protection
+    protect_oom
+
+    # Refresh foreground notification
+    refresh_notification
+
+    sleep 300  # check every 5 minutes
+done

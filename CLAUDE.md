@@ -44,7 +44,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 - `/tmp` writes → permission denied. Use `~/` or `$HOME/.cache/`.
 - `set -e` in long-running scripts → kills daemon on any non-zero sub-command. Never use in daemons.
 
-## Script inventory (30 scripts)
+## Script inventory (38 scripts)
 
 ### Core
 | Script | Description |
@@ -53,7 +53,8 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 | `whisper-listen` | Record + transcribe with whisper.cpp. Flags: `--fast` (tiny.en ~3s), `--accurate` (small.en ~20s), `--energy-gate N`. Default: base.en ~5-7s |
 | `run-voice` | Detached script runner — prevents OOM on SSH |
 | `voice-context` | Shared context store (write/read/clear/last). 10min TTL. |
-| `voice-claude` | Claude API integration — intelligent fallback with 16 tool definitions, conversation memory, offline fallback |
+| `voice-claude` | Claude API integration — intelligent fallback with 22 tool definitions, conversation memory, offline fallback |
+| `assistant-watchdog` | Background watchdog — restarts dead daemons every 5 minutes, refreshes OOM protection and notifications |
 
 ### Wake word
 | Script | Description |
@@ -85,6 +86,12 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 | `voice-weather` | Weather via OpenWeather API (if key configured) |
 | `voice-whatsapp` | Reply to WhatsApp messages |
 | `voice-youtube` | Search and play YouTube videos |
+| `voice-journal` | Voice diary with sentiment tracking, weekly summaries via Claude |
+| `voice-note-ai` | Claude-powered note search and summarisation |
+| `voice-location` | Manual location queries and WiFi SSID configuration |
+| `voice-location-monitor` | Background WiFi-based location daemon — triggers macros on location change |
+| `voice-history` | Voice command history and usage analytics |
+| `voice-settings` | Voice-controlled assistant settings (threshold, model, quiet hours, tone) |
 
 ### Utilities
 | Script | Description |
@@ -143,6 +150,13 @@ termux-torch on|off
 ~/.smart-home-config          — Home Assistant / n8n endpoints
 ~/.anthropic_key               — Claude API key (chmod 600)
 ~/.voice-claude-history.json   — Claude conversation history (10min TTL)
+~/.assistant-settings.json     — Unified settings file (wake word, voice, notifications, assistant)
+~/.location-config.json        — Location profiles (home/hospital WiFi SSIDs, GPS coords)
+~/.location-monitor.pid        — Location monitor PID file
+~/.watchdog.pid                — Watchdog PID file
+~/journal/                     — Voice journal entries (one .md file per day)
+~/logs/command-history.log     — Voice command history (timestamp|datetime|text|route)
+~/logs/watchdog.log            — Watchdog restart log
 ~/.shortcuts/                 — Termux:Widget symlinks
 ~/.termux/boot/               — Termux:Boot startup scripts
 ~/projects/nothing-archives/  — this git repo
@@ -155,7 +169,7 @@ termux-torch on|off
 - **API key**: `~/.anthropic_key` (chmod 600, never committed)
 - **Conversation history**: `~/.voice-claude-history.json` (10min TTL, last 10 turns)
 - **Fallback**: offline voice router if no network or API error
-- **Tools**: 16 tools mapping to existing voice-* scripts
+- **Tools**: 22 tools mapping to existing voice-* scripts
 - **System prompt**: personalized (ED doctor, app developer, Grimsby)
 - **Latency**: ~2s for direct answers, ~5s for tool calls (includes follow-up)
 
@@ -172,6 +186,31 @@ set_alarm, open_app, search_youtube, play_music, toggle_setting, set_reminder,
 get_weather, take_screenshot, make_call, send_sms, read_notifications,
 get_system_info, run_macro, save_note, get_calendar, daily_briefing
 
+
+## Stability & Background Processes
+
+### Battery optimization
+- Termux + Termux:API whitelisted from battery optimization
+- AppOps: RUN_IN_BACKGROUND, WAKE_LOCK, RUN_ANY_IN_BACKGROUND
+- WiFi sleep policy: never (wifi_sleep_policy=2, wifi_idle_ms=max)
+
+### Process protection
+- `termux-wake-lock` acquired on boot (02-wakelock.sh)
+- Ongoing foreground notification ("Voice Assistant Active")
+- OOM score adj set to -1000 for Termux process
+- Watchdog daemon checks every 5 minutes, restarts dead processes
+
+### Managed daemons
+| Daemon | PID file | Boot script |
+|--------|----------|-------------|
+| hey-nothing (wake word) | ~/.hey-nothing.pid | 05-hey-nothing.sh |
+| shift-monitor | ~/.shift-monitor.pid | 06-shift-monitor.sh |
+| location-monitor | ~/.location-monitor.pid | 08-location-monitor.sh |
+| assistant-watchdog | ~/.watchdog.pid | 07-watchdog.sh |
+
+### SSH keepalive
+- sshd: ClientAliveInterval=60, ClientAliveCountMax=10
+- Client: ServerAliveInterval=60, ServerAliveCountMax=10, TCPKeepAlive=yes
 ## Development workflow
 
 ```bash
