@@ -264,61 +264,17 @@ TOOLS = [
         }
     },
     {
-        "name": "journal",
-        "description": "Create or read voice journal entries. Use when user wants to journal, log thoughts, record feelings, or get journal summary.",
+        "name": "android_control",
+        "description": "Control Android system directly. Use for: navigation (go home, go back, recent apps), screen gestures (tap, scroll, swipe, long press), text input into focused fields, share sheet, Android settings (wifi/display/sound/etc), app install/uninstall/force-stop, screen recording, screen casting, OCR (read screen), UI automation (find and tap buttons by text).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["new_entry", "read_today", "weekly_summary", "sentiment", "search"], "description": "Journal action"},
-                "query": {"type": "string", "description": "Search query for search action"}
+                "command": {
+                    "type": "string",
+                    "description": "Natural language Android control command e.g. 'go home', 'scroll down', 'tap the Submit button', 'type Hello World', 'read screen', 'record screen for 30 seconds', 'find and tap New Chat', 'open display settings'"
+                }
             },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "note_intelligence",
-        "description": "Search, summarise, or analyse voice notes. Use when asked about past notes, note summaries, or finding information in notes.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["summarise_week", "search", "read_last", "count", "delete"], "description": "Note action"},
-                "query": {"type": "string", "description": "Search topic or note title"}
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "command_history",
-        "description": "Check voice command history and usage analytics. Use when asked what commands were used, usage patterns, or history.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "period": {"type": "string", "enum": ["today", "yesterday", "week"], "description": "Time period"},
-                "query": {"type": "string", "description": "Topic to search history for"}
-            },
-            "required": ["period"]
-        }
-    },
-    {
-        "name": "check_location",
-        "description": "Check current location or configure location settings.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Location query e.g. 'where am i', 'set home wifi'"}
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "assistant_settings",
-        "description": "View or change assistant settings like wake word threshold, STT model, quiet hours, medical mode.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Setting to change e.g. 'change threshold', 'show current', 'medical mode on'"}
-            },
-            "required": ["query"]
+            "required": ["command"]
         }
     }
 ]
@@ -353,9 +309,6 @@ Clinical knowledge:
 Abdul is an MRCEM emergency medicine doctor. You can answer clinical questions about drug doses,
 differentials, management, scores, and FRCEM exam content. Use UK guidelines (RCEM, NICE, BNF).
 Use UK drug names (paracetamol not acetaminophen). Be concise — this is a voice interface.
-
-Abdul has a notes directory at ~/notes/ with voice-dictated notes and a journal at ~/journal/ with daily diary entries.
-You can reference these when answering questions about his past thoughts or plans.
 
 Always respond as if speaking — short, natural, conversational."""
 
@@ -425,11 +378,7 @@ def execute_tool(tool_name, tool_input):
         "get_calendar": ("~/bin/voice-calendar", tool_input.get("period", "today")),
         "daily_briefing": ("~/bin/voice-briefing", tool_input.get("length", "full")),
         "check_shift": ("~/bin/voice-shift", tool_input.get("query", "today")),
-        "journal": ("~/bin/voice-journal", tool_input.get("action", "new_entry")),
-        "note_intelligence": ("~/bin/voice-note-ai", f"{tool_input.get('action', 'search')} {tool_input.get('query', '')}".strip()),
-        "command_history": ("~/bin/voice-history", f"{tool_input.get('period', 'today')} {tool_input.get('query', '')}".strip()),
-        "check_location": ("~/bin/voice-location", tool_input.get("query", "where am i")),
-        "assistant_settings": ("~/bin/voice-settings", tool_input.get("query", "show current")),
+        "android_control": ("~/bin/voice-android", tool_input.get("command", "")),
     }
     if tool_name not in scripts:
         return f"Unknown tool: {tool_name}"

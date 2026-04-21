@@ -1,0 +1,560 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""
+voice-android — Deep Android control via voice
+Navigation, gestures, text input, settings, packages,
+screen recording, OCR, UI automation
+"""
+import os
+import re
+import sys
+import shlex
+import signal
+import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path.home()
+
+# ── Helpers ───────────────────────────────────────────────────
+
+def say(text):
+    subprocess.Popen(
+        ['termux-tts-speak', text],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(0.3)
+
+def su(cmd):
+    """Android service calls — uid 2000 (su shell)."""
+    r = subprocess.run(
+        ['su', 'shell', '-c', cmd],
+        capture_output=True, text=True, timeout=15
+    )
+    return r.stdout.strip(), r.returncode
+
+def su_root(cmd):
+    """Kernel/system calls — uid 0."""
+    r = subprocess.run(
+        ['su', '-c', cmd],
+        capture_output=True, text=True, timeout=15
+    )
+    return r.stdout.strip(), r.returncode
+
+def get_screen():
+    out, _ = su('wm size')
+    m = re.search(r'(\d+)x(\d+)', out)
+    return (int(m.group(1)), int(m.group(2))) if m else (1084, 2412)
+
+# ── Navigation ────────────────────────────────────────────────
+
+def go_home():
+    su('input keyevent KEYCODE_HOME')
+    say("Home")
+
+def go_back():
+    su('input keyevent KEYCODE_BACK')
+    say("Back")
+
+def recent_apps():
+    su('input keyevent KEYCODE_APP_SWITCH')
+    say("Recent apps")
+
+def show_notifications():
+    w, h = get_screen()
+    su(f'input swipe {w // 2} 0 {w // 2} {h // 2} 300')
+    say("Notifications")
+
+def show_quick_settings():
+    w, h = get_screen()
+    cx = w // 2
+    su(f'input swipe {cx} 0 {cx} {h // 2} 300')
+    time.sleep(0.3)
+    su(f'input swipe {cx} 0 {cx} {h // 2} 300')
+    say("Quick settings")
+
+# ── Screen interaction ────────────────────────────────────────
+
+def scroll_down(amount=3):
+    w, h = get_screen()
+    cx = w // 2
+    for _ in range(amount):
+        su(f'input swipe {cx} {int(h * 0.7)} {cx} {int(h * 0.3)} 300')
+        time.sleep(0.1)
+    say("Scrolled down")
+
+def scroll_up(amount=3):
+    w, h = get_screen()
+    cx = w // 2
+    for _ in range(amount):
+        su(f'input swipe {cx} {int(h * 0.3)} {cx} {int(h * 0.7)} 300')
+        time.sleep(0.1)
+    say("Scrolled up")
+
+def scroll_left():
+    w, h = get_screen()
+    su(f'input swipe {int(w * 0.8)} {h // 2} {int(w * 0.2)} {h // 2} 300')
+    say("Swiped left")
+
+def scroll_right():
+    w, h = get_screen()
+    su(f'input swipe {int(w * 0.2)} {h // 2} {int(w * 0.8)} {h // 2} 300')
+    say("Swiped right")
+
+def tap_pct(xp, yp):
+    w, h = get_screen()
+    su(f'input tap {int(w * xp)} {int(h * yp)}')
+
+def long_press_pct(xp, yp, ms=1000):
+    w, h = get_screen()
+    x, y = int(w * xp), int(h * yp)
+    su(f'input swipe {x} {y} {x} {y} {ms}')
+    say("Long pressed")
+
+# ── Text injection ────────────────────────────────────────────
+
+def type_text(text):
+    # Android input text: spaces must be %s; shlex.quote handles shell quoting
+    android_text = text.replace(' ', '%s')
+    su(f'input text {shlex.quote(android_text)}')
+    say(f"Typed: {text[:30]}")
+
+def press_enter():
+    su('input keyevent KEYCODE_ENTER')
+    say("Enter")
+
+def clear_field():
+    su('input keyevent CTRL_A')
+    time.sleep(0.1)
+    su('input keyevent KEYCODE_DEL')
+    say("Cleared")
+
+def copy_text():
+    su('input keyevent CTRL_C')
+    say("Copied")
+
+def paste_text():
+    su('input keyevent CTRL_V')
+    say("Pasted")
+
+# ── Settings ──────────────────────────────────────────────────
+
+SETTINGS_ACTIONS = {
+    'wifi':          'android.settings.WIFI_SETTINGS',
+    'bluetooth':     'android.settings.BLUETOOTH_SETTINGS',
+    'display':       'android.settings.DISPLAY_SETTINGS',
+    'sound':         'android.settings.SOUND_SETTINGS',
+    'apps':          'android.settings.APPLICATION_SETTINGS',
+    'battery':       'android.intent.action.POWER_USAGE_SUMMARY',
+    'storage':       'android.settings.INTERNAL_STORAGE_SETTINGS',
+    'accessibility': 'android.settings.ACCESSIBILITY_SETTINGS',
+    'developer':     'android.settings.APPLICATION_DEVELOPMENT_SETTINGS',
+    'about':         'android.settings.DEVICE_INFO_SETTINGS',
+    'location':      'android.settings.LOCATION_SOURCE_SETTINGS',
+    'security':      'android.settings.SECURITY_SETTINGS',
+    'language':      'android.settings.LOCALE_SETTINGS',
+    'keyboard':      'android.settings.INPUT_METHOD_SETTINGS',
+    'date':          'android.settings.DATE_SETTINGS',
+}
+
+def open_settings(section=None):
+    action = SETTINGS_ACTIONS.get(section, 'android.settings.SETTINGS')
+    su(f'am start -a {action}')
+    say(f"Opening {section or 'settings'}")
+
+def change_font_size(size='normal'):
+    scales = {
+        'small': '0.85', 'normal': '1.0',
+        'large': '1.15', 'huge': '1.3', 'largest': '1.5'
+    }
+    su(f"settings put system font_scale {scales.get(size, '1.0')}")
+    say(f"Font size: {size}")
+
+def set_screen_timeout(seconds):
+    su(f'settings put system screen_off_timeout {seconds * 1000}')
+    say(f"Screen timeout: {seconds} seconds")
+
+def set_brightness(pct):
+    su('settings put system screen_brightness_mode 0')
+    su(f'settings put system screen_brightness {int(pct * 2.55)}')
+    say(f"Brightness: {pct}%")
+
+def change_wallpaper():
+    su('am start -a android.intent.action.SET_WALLPAPER')
+    say("Opening wallpaper picker")
+
+def toggle_rotate(enable=True):
+    su(f'settings put system accelerometer_rotation {1 if enable else 0}')
+    say(f"Auto rotate: {'on' if enable else 'off'}")
+
+# ── Package management ────────────────────────────────────────
+
+def find_package(app_name):
+    out, _ = su(f'pm list packages | grep -i {shlex.quote(app_name)}')
+    return [l.replace('package:', '').strip() for l in out.splitlines() if l.strip()]
+
+def get_foreground_app():
+    out, _ = su('dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" | head -1')
+    m = re.search(r'([a-z][a-z0-9_.]+)/[^\s]+', out)
+    return m.group(1) if m else 'unknown'
+
+def clear_app_cache(package):
+    _, code = su_root(f'pm clear {shlex.quote(package)}')
+    say("Cache cleared" if code == 0 else "Failed to clear cache")
+
+def force_stop_app(package):
+    su(f'am force-stop {shlex.quote(package)}')
+    say(f"Stopped {package.split('.')[-1]}")
+
+def install_apk(apk_path):
+    if not Path(apk_path).exists():
+        say("APK not found")
+        return
+    say("Installing...")
+    out, code = su_root(f'pm install -r {shlex.quote(apk_path)}')
+    say("Installed" if (code == 0 or 'Success' in out) else "Install failed")
+
+def uninstall_app(package):
+    say("Uninstalling...")
+    out, _ = su(f'pm uninstall {shlex.quote(package)}')
+    say("Uninstalled" if 'Success' in out else "Uninstall failed")
+
+# ── Screen recording ──────────────────────────────────────────
+
+REC_PID_FILE = HOME / '.screen-recording.pid'
+REC_PATH_FILE = HOME / '.screen-recording-path'
+
+def start_recording(duration=None):
+    if REC_PID_FILE.exists():
+        try:
+            pid = int(REC_PID_FILE.read_text().strip())
+            os.kill(pid, 0)  # raises OSError if process is dead
+            say("Already recording. Say stop recording first.")
+            return
+        except (OSError, ValueError):
+            REC_PID_FILE.unlink(missing_ok=True)  # stale PID — proceed
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'/sdcard/Download/recording_{ts}.mp4'
+    cmd = f'screenrecord{f" --time-limit {duration}" if duration else ""} {filename}'
+    proc = subprocess.Popen(
+        ['su', '-c', cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    REC_PID_FILE.write_text(str(proc.pid))
+    REC_PATH_FILE.write_text(filename)
+    say(f"Recording started{f', stops in {duration} seconds' if duration else ''}. Say stop recording to end.")
+
+def stop_recording():
+    if not REC_PID_FILE.exists():
+        say("Not recording")
+        return
+    try:
+        pid = int(REC_PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGINT)
+        time.sleep(1)
+        filename = REC_PATH_FILE.read_text().strip() if REC_PATH_FILE.exists() else ''
+        if filename:
+            su(f'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://{filename}"')
+        say("Recording saved to Downloads")
+    except Exception:
+        say("Stopped")
+    finally:
+        REC_PID_FILE.unlink(missing_ok=True)
+
+# ── OCR ───────────────────────────────────────────────────────
+
+def read_screen():
+    shot = '/sdcard/Download/ocr_screen.png'
+    su_root(f'screencap -p {shot}')
+    time.sleep(0.5)
+    r = subprocess.run(
+        ['tesseract', shot, 'stdout', '-l', 'eng', '--psm', '3'],
+        capture_output=True, text=True, timeout=30
+    )
+    text = re.sub(r'\s+', ' ', r.stdout).strip()
+    if not text:
+        say("Could not read text from screen")
+        return None
+    preview = text[:200]
+    say(f"Screen shows: {preview}{'...' if len(text) > 200 else ''}")
+    return text
+
+def read_clipboard():
+    r = subprocess.run(['termux-clipboard-get'], capture_output=True, text=True, timeout=5)
+    text = r.stdout.strip()
+    say(f"Clipboard: {text[:100]}" if text else "Clipboard is empty")
+    return text
+
+def set_clipboard(text):
+    subprocess.run(['termux-clipboard-set', text], timeout=5)
+    say("Copied to clipboard")
+
+# ── UI Automation ─────────────────────────────────────────────
+
+def dump_ui():
+    su_root('uiautomator dump /sdcard/ui_dump.xml')
+    time.sleep(0.8)
+    r = subprocess.run(['cat', '/sdcard/ui_dump.xml'], capture_output=True, text=True, timeout=10)
+    return r.stdout
+
+def _bounds_from_xml(xml, search_text):
+    """Find element bounds by text or content-desc (exact then partial)."""
+    for attr in ('text', 'content-desc'):
+        for escaped in (re.escape(search_text), re.escape(search_text)):
+            # Exact match
+            pattern = rf'{attr}="{escaped}"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+            m = re.search(pattern, xml, re.IGNORECASE)
+            if m:
+                return m
+        # Partial match
+        pattern = rf'{attr}="[^"]*{re.escape(search_text)}[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+        m = re.search(pattern, xml, re.IGNORECASE)
+        if m:
+            return m
+    return None
+
+def find_and_tap(search_text):
+    xml = dump_ui()
+    if not xml:
+        say("Could not read UI")
+        return False
+    m = _bounds_from_xml(xml, search_text)
+    if not m:
+        say(f"Could not find: {search_text}")
+        return False
+    x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+    su(f'input tap {(x1 + x2) // 2} {(y1 + y2) // 2}')
+    say(f"Tapped {search_text}")
+    return True
+
+def list_ui_buttons():
+    xml = dump_ui()
+    clickable = re.findall(r'text="([^"]+)"[^>]*clickable="true"', xml)
+    clickable = [t for t in clickable if t.strip()]
+    if clickable:
+        items = ', '.join(clickable[:5])
+        say(f"Found {len(clickable)} buttons: {items}{'...' if len(clickable) > 5 else ''}")
+    else:
+        say("No clickable buttons found")
+    return clickable
+
+def scroll_to_find(text, max_scrolls=5):
+    for _ in range(max_scrolls):
+        if find_and_tap(text):
+            return True
+        scroll_down(2)
+        time.sleep(0.5)
+    say(f"Could not find {text} after scrolling")
+    return False
+
+# ── Share ─────────────────────────────────────────────────────
+
+def share_text(text, target=None):
+    if target == 'whatsapp':
+        encoded = text.replace(' ', '%20').replace('&', '%26')
+        su(f'am start -a android.intent.action.VIEW -d "whatsapp://send?text={encoded}" -p com.whatsapp')
+        say("Sharing to WhatsApp")
+    elif target == 'telegram':
+        su(f'am start -a android.intent.action.SEND -t text/plain -e android.intent.extra.TEXT {shlex.quote(text)} -p org.telegram.messenger')
+        say("Sharing to Telegram")
+    else:
+        su(f'am start -a android.intent.action.SEND -t text/plain -e android.intent.extra.TEXT {shlex.quote(text)}')
+        say("Share sheet opened")
+
+def share_last_screenshot(target=None):
+    # Check standard screenshot paths in order
+    for folder in ('/sdcard/DCIM/Screenshots', '/sdcard/Pictures/Screenshots', '/sdcard/Download'):
+        r = subprocess.run(['ls', '-t', folder], capture_output=True, text=True)
+        files = [f for f in r.stdout.splitlines() if f.lower().endswith('.png') or f.lower().endswith('.jpg')]
+        if files:
+            latest = f'{folder}/{files[0]}'
+            if target == 'whatsapp':
+                su(f'am start -a android.intent.action.SEND -t image/png --eu android.intent.extra.STREAM "file://{latest}" -p com.whatsapp')
+            else:
+                su(f'am start -a android.intent.action.SEND -t image/png --eu android.intent.extra.STREAM "file://{latest}"')
+            say("Sharing screenshot")
+            return
+    say("No screenshots found")
+
+# ── Screen casting ────────────────────────────────────────────
+
+def open_cast():
+    su('am start -a android.settings.CAST_SETTINGS')
+    say("Opening cast settings")
+
+def open_nearby_share():
+    su('am start -n com.google.android.gms/.nearby.sharing.ShareSheetActivity')
+    say("Opening nearby share")
+
+# ── Command router ────────────────────────────────────────────
+
+def parse_and_execute(text):
+    t = text.lower().strip()
+
+    # Navigation
+    if any(k in t for k in ['go home', 'home screen', 'press home']):
+        go_home()
+    elif any(k in t for k in ['go back', 'press back', 'back button']):
+        go_back()
+    elif any(k in t for k in ['recent apps', 'app switcher', 'open recents']):
+        recent_apps()
+    elif any(k in t for k in ['show notifications', 'pull down notifications', 'notification shade']):
+        show_notifications()
+    elif any(k in t for k in ['quick settings', 'pull down twice']):
+        show_quick_settings()
+
+    # Scroll / swipe
+    elif any(k in t for k in ['scroll down', 'swipe up', 'go down']):
+        amount = 8 if any(k in t for k in ['a lot', 'fast', 'far']) else 1 if any(k in t for k in ['little', 'bit', 'slightly']) else 3
+        scroll_down(amount)
+    elif any(k in t for k in ['scroll up', 'swipe down', 'go up']):
+        amount = 8 if any(k in t for k in ['a lot', 'fast', 'far']) else 1 if any(k in t for k in ['little', 'bit', 'slightly']) else 3
+        scroll_up(amount)
+    elif any(k in t for k in ['scroll left', 'swipe right']):
+        scroll_left()
+    elif any(k in t for k in ['scroll right', 'swipe left']):
+        scroll_right()
+
+    # Tap
+    elif any(k in t for k in ['tap center', 'tap middle']):
+        tap_pct(0.5, 0.5)
+        say("Tapped center")
+    elif 'tap top' in t:
+        tap_pct(0.5, 0.1)
+        say("Tapped top")
+    elif 'tap bottom' in t:
+        tap_pct(0.5, 0.9)
+        say("Tapped bottom")
+    elif 'long press' in t:
+        long_press_pct(0.5, 0.5)
+    elif t.startswith('tap ') or t.startswith('click '):
+        btn = re.sub(r'^(tap|click)\s+(the\s+)?', '', t).replace(' button', '').strip()
+        if btn:
+            find_and_tap(btn)
+
+    # Text
+    elif any(t.startswith(k) for k in ['type ', 'write ', 'input text ']):
+        text_to_type = re.sub(r'^(type|write|input text)\s+', '', t)
+        type_text(text_to_type)
+    elif any(k in t for k in ['press enter', 'hit enter', 'submit form']):
+        press_enter()
+    elif any(k in t for k in ['clear field', 'delete text', 'clear input']):
+        clear_field()
+    elif t in ('copy', 'copy text', 'copy that'):
+        copy_text()
+    elif t in ('paste', 'paste text', 'paste that'):
+        paste_text()
+    elif 'read clipboard' in t:
+        read_clipboard()
+
+    # Share
+    elif any(k in t for k in ['share screenshot', 'send screenshot']):
+        share_last_screenshot('whatsapp' if 'whatsapp' in t else None)
+    elif 'share' in t or 'send to whatsapp' in t or 'send to telegram' in t:
+        if 'whatsapp' in t:
+            content = re.sub(r'^.*(share|send)\s+', '', t)
+            content = re.sub(r'(to|on)\s+whatsapp', '', content).strip()
+            share_text(content, 'whatsapp')
+        elif 'telegram' in t:
+            content = re.sub(r'^.*(share|send)\s+', '', t)
+            content = re.sub(r'(to|on)\s+telegram', '', content).strip()
+            share_text(content, 'telegram')
+        else:
+            su('am start -a android.intent.action.SEND -t text/plain')
+            say("Share sheet opened")
+
+    # Settings
+    elif 'settings' in t:
+        section = next((s for s in SETTINGS_ACTIONS if s in t), None)
+        open_settings(section)
+    elif any(k in t for k in ['font size', 'text size']):
+        size = next((s for s in ['small', 'large', 'huge', 'largest'] if s in t), 'normal')
+        change_font_size(size)
+    elif 'screen timeout' in t:
+        secs = (300 if any(k in t for k in ['five minute', '5 minute'])
+                else 120 if any(k in t for k in ['two minute', '2 minute'])
+                else 60 if any(k in t for k in ['one minute', '1 minute'])
+                else 30)
+        set_screen_timeout(secs)
+    elif 'auto rotate' in t:
+        toggle_rotate('on' in t or 'enable' in t)
+    elif 'wallpaper' in t:
+        change_wallpaper()
+    elif 'brightness' in t:
+        m = re.search(r'(\d+)\s*%', t)
+        set_brightness(int(m.group(1))) if m else say("Say brightness followed by a percentage")
+
+    # Package management
+    elif 'install' in t and ('apk' in t or 'app' in t):
+        apks = sorted(Path('/sdcard/Download').glob('*.apk'), key=lambda f: f.stat().st_mtime, reverse=True)
+        install_apk(str(apks[0])) if apks else say("No APK files in Downloads")
+    elif any(k in t for k in ['uninstall', 'remove app']):
+        name = re.sub(r'^.*(uninstall|remove app?)\s+', '', t).strip()
+        pkgs = find_package(name)
+        uninstall_app(pkgs[0]) if pkgs else say(f"App not found: {name}")
+    elif 'clear cache' in t:
+        clear_app_cache(get_foreground_app())
+    elif 'force stop' in t:
+        name = re.sub(r'^.*force stop\s+', '', t).strip()
+        pkgs = find_package(name) if name else []
+        force_stop_app(pkgs[0] if pkgs else get_foreground_app())
+    elif any(k in t for k in ['what app', 'current app', 'which app']):
+        say(f"Current app: {get_foreground_app()}")
+
+    # Screen recording
+    elif any(k in t for k in ['start recording', 'record screen', 'start screen record']):
+        m = re.search(r'(\d+)\s*(second|minute)', t)
+        duration = None
+        if m:
+            duration = int(m.group(1)) * (60 if 'minute' in m.group(2) else 1)
+        start_recording(duration)
+    elif any(k in t for k in ['stop recording', 'end recording']):
+        stop_recording()
+    elif any(k in t for k in ['recording status', 'am i recording']):
+        say("Recording" if REC_PID_FILE.exists() else "Not recording")
+
+    # Screen casting
+    elif any(k in t for k in ['cast screen', 'screen cast', 'cast to', 'mirror screen']):
+        open_cast()
+    elif 'nearby share' in t:
+        open_nearby_share()
+
+    # OCR / read screen
+    elif any(k in t for k in ['read screen', "what's on screen", 'what does screen say', "read what's on"]):
+        read_screen()
+    elif t.startswith('find ') and any(k in t for k in ['button', 'screen', ' on ']):
+        target = re.sub(r'^find\s+', '', t).replace(' on screen', '').replace(' button', '').strip()
+        find_and_tap(target)
+    elif any(k in t for k in ['list buttons', 'what buttons', 'show buttons']):
+        list_ui_buttons()
+    elif any(k in t for k in ['scroll to find', 'scroll and find']):
+        target = re.sub(r'.*(scroll to find|scroll and find)\s+', '', t).strip()
+        scroll_to_find(target)
+
+    else:
+        return False
+    return True
+
+
+def main():
+    if len(sys.argv) > 1:
+        text = ' '.join(sys.argv[1:]).strip()
+    else:
+        r = subprocess.run(
+            [str(HOME / 'bin' / 'whisper-listen'), '7'],
+            capture_output=True, text=True, timeout=15
+        )
+        text = r.stdout.strip()
+
+    if not text:
+        say("No command heard")
+        sys.exit(1)
+
+    if not parse_and_execute(text):
+        say(f"Unknown android command: {text}")
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

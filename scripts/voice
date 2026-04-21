@@ -82,6 +82,11 @@ elif [[ "$T" == *"pause"* || "$T" == *"resume"* || "$T" == *"next song"* || "$T"
     echo "→ voice-music"
     exec ~/bin/voice-music "$TEXT"
 
+# ─── Android UI control (before "open" catch-all) ────────
+elif [[ "$T" == *"settings"* || "$T" == *"font size"* || "$T" == *"text size"* || "$T" == *"screen timeout"* || "$T" == *"auto rotate"* || "$T" == *"wallpaper"* || "$T" == *"show notifications"* || "$T" == *"pull down"* || "$T" == *"quick settings"* ]]; then
+    echo "→ voice-android"
+    exec ~/bin/voice-android "$TEXT"
+
 elif [[ "$T" == *"open"* || "$T" == *"launch"* || "$T" == *"start"* ]]; then
     echo "→ voice-open"
     exec ~/bin/voice-open "$TEXT"
@@ -146,6 +151,20 @@ elif [[ "$T" == *"call"* && ( "$T" == *"back"* || "$T" == *"them"* ) ]]; then
 elif [[ "$T" == *"what did"* && "$T" == *"do"* ]] || [[ "$T" == *"last action"* || "$T" == *"what was that"* ]]; then
     echo "→ context: last action"
     exec ~/bin/voice-context last
+
+# ─── Android gestures, recording, OCR, packages ──────────
+elif [[ "$T" == *"go home"* || "$T" == *"home screen"* || "$T" == *"go back"* || "$T" == *"recent apps"* ]] || \
+     [[ "$T" == *"scroll down"* || "$T" == *"scroll up"* || "$T" == *"scroll left"* || "$T" == *"scroll right"* ]] || \
+     [[ "$T" == *"swipe up"* || "$T" == *"swipe down"* || "$T" == *"swipe left"* || "$T" == *"swipe right"* ]] || \
+     [[ "$T" == *"tap "* || "$T" == *"long press"* ]] || \
+     [[ "$T" == *"type "* || "$T" == *"press enter"* || "$T" == *"clear field"* ]] || \
+     [[ "$T" == *"read screen"* || "$T" == *"what's on screen"* || "$T" == *"list buttons"* || "$T" == *"show buttons"* ]] || \
+     [[ "$T" == *"record screen"* || "$T" == *"start recording"* || "$T" == *"stop recording"* ]] || \
+     [[ "$T" == *"cast screen"* || "$T" == *"mirror screen"* || "$T" == *"nearby share"* ]] || \
+     [[ "$T" == *"share screenshot"* || "$T" == *"send screenshot"* ]] || \
+     [[ "$T" == *"uninstall"* || "$T" == *"force stop"* || "$T" == *"clear cache"* || "$T" == *"what app"* || "$T" == *"current app"* ]]; then
+    echo "→ voice-android"
+    exec ~/bin/voice-android "$TEXT"
 
 else
     MSG="I didn't understand: $TEXT"
