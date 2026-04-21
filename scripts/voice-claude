@@ -251,6 +251,17 @@ TOOLS = [
             },
             "required": []
         }
+    },
+    {
+        "name": "check_shift",
+        "description": "Check Abdul's work shift schedule. Use when asked about working hours, shifts, on-call status, or rota.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Query about shifts e.g. 'today', 'tonight', 'tomorrow', 'next shift', 'this week'"}
+            },
+            "required": ["query"]
+        }
     }
 ]
 
@@ -275,18 +286,40 @@ Response rules:
 Abdul's context:
 - Wife's birthday: 27 January
 - Wedding anniversary: 26 April
-- Works night and day shifts at the ED
+- Works night and day shifts at the ED (Diana Princess of Wales Hospital, Grimsby)
 - Commutes via Stagecoach bus
 - Apps: ReviseMRCEM, ReviseFCPS1, DocOnCall, ClinCalc Pro, PhantomGrid, Pet Cal, CarryMate
 - Location: Grimsby/Cleethorpes area, England
 
+Clinical knowledge:
+Abdul is an MRCEM emergency medicine doctor. You can answer clinical questions about drug doses,
+differentials, management, scores, and FRCEM exam content. Use UK guidelines (RCEM, NICE, BNF).
+Use UK drug names (paracetamol not acetaminophen). Be concise — this is a voice interface.
+
 Always respond as if speaking — short, natural, conversational."""
 
+def get_shift_context():
+    """Get current shift status for system prompt injection."""
+    try:
+        result = subprocess.run(
+            [os.path.expanduser("~/bin/voice-shift"), "--summary"],
+            capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
 def call_claude_api(messages, tools=TOOLS):
+    # Inject live shift context into system prompt
+    shift_ctx = get_shift_context()
+    system = SYSTEM_PROMPT
+    if shift_ctx:
+        system += f"\n\nCurrent shift status: {shift_ctx}"
+
     payload = {
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 1024,
-        "system": SYSTEM_PROMPT,
+        "system": system,
         "tools": tools,
         "messages": messages
     }
@@ -330,6 +363,7 @@ def execute_tool(tool_name, tool_input):
         "save_note": ("~/bin/voice-note", tool_input.get("title", "")),
         "get_calendar": ("~/bin/voice-calendar", tool_input.get("period", "today")),
         "daily_briefing": ("~/bin/voice-briefing", tool_input.get("length", "full")),
+        "check_shift": ("~/bin/voice-shift", tool_input.get("query", "today")),
     }
     if tool_name not in scripts:
         return f"Unknown tool: {tool_name}"

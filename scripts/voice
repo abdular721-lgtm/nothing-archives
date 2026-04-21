@@ -149,6 +149,11 @@ elif [[ "$T" == *"what did"* && "$T" == *"do"* ]] || [[ "$T" == *"last action"* 
     echo "→ context: last action"
     exec ~/bin/voice-context last
 
+# ─── Shift schedule ──────────────────────────────────────
+elif [[ "$T" == *"shift"* || "$T" == *"working"* || "$T" == *"on call"* || "$T" == *"rota"* || "$T" == *"on duty"* || "$T" == *"off duty"* ]]; then
+    echo "→ voice-shift"
+    exec ~/bin/voice-shift "$TEXT"
+
 else
     # No keyword match — send to Claude API for intelligent handling
     echo "→ voice-claude (no keyword match)"

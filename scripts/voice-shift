@@ -1,0 +1,281 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""
+voice-shift — Shift schedule awareness for voice assistant
+Reads ~/.shift-schedule.json, answers shift questions, outputs context summaries.
+
+Usage:
+  voice-shift "am I working today"
+  voice-shift "next shift"
+  voice-shift "this week"
+  voice-shift "add 2026-05-06 day"
+  voice-shift --summary          (machine-readable context for Claude API)
+"""
+import json
+import os
+import sys
+import subprocess
+from datetime import datetime, timedelta
+from pathlib import Path
+
+SCHEDULE_FILE = Path.home() / ".shift-schedule.json"
+
+def say(text):
+    print(text, flush=True)
+    subprocess.Popen(
+        ["termux-tts-speak", text],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+
+def load_schedule():
+    if not SCHEDULE_FILE.exists():
+        return {"shifts": [], "hospital": "Unknown", "department": "Unknown", "default_location": "Unknown"}
+    try:
+        return json.loads(SCHEDULE_FILE.read_text())
+    except Exception:
+        return {"shifts": [], "hospital": "Unknown", "department": "Unknown", "default_location": "Unknown"}
+
+def save_schedule(data):
+    SCHEDULE_FILE.write_text(json.dumps(data, indent=2))
+
+def parse_shift(s):
+    """Parse a shift dict into datetime objects."""
+    date = datetime.strptime(s["date"], "%Y-%m-%d")
+    start_h, start_m = map(int, s["start"].split(":"))
+    end_h, end_m = map(int, s["end"].split(":"))
+    start_dt = date.replace(hour=start_h, minute=start_m)
+    # Night shifts end the next day
+    if end_h < start_h:
+        end_dt = (date + timedelta(days=1)).replace(hour=end_h, minute=end_m)
+    else:
+        end_dt = date.replace(hour=end_h, minute=end_m)
+    return start_dt, end_dt
+
+def get_shifts_for_date(shifts, target_date):
+    """Get shifts that overlap with target_date (handles night shifts spanning midnight)."""
+    results = []
+    for s in shifts:
+        start_dt, end_dt = parse_shift(s)
+        # Shift overlaps target_date if it starts on that date OR ends on that date (night shift)
+        if start_dt.date() == target_date or (end_dt.date() == target_date and end_dt.hour > 0):
+            results.append(s)
+    return results
+
+def get_next_shift(shifts, include_current=False):
+    """Find the next upcoming shift from now. Skips currently active shift by default."""
+    now = datetime.now()
+    future = []
+    for s in shifts:
+        start_dt, end_dt = parse_shift(s)
+        if include_current:
+            if end_dt > now:
+                future.append((start_dt, s))
+        else:
+            if start_dt > now:
+                future.append((start_dt, s))
+    future.sort(key=lambda x: x[0])
+    return future[0] if future else None
+
+def get_current_shift(shifts):
+    """Check if currently on shift."""
+    now = datetime.now()
+    for s in shifts:
+        start_dt, end_dt = parse_shift(s)
+        if start_dt <= now <= end_dt:
+            return s
+    return None
+
+def time_until(dt):
+    """Human-readable time until a datetime."""
+    now = datetime.now()
+    diff = dt - now
+    total_mins = int(diff.total_seconds() / 60)
+    if total_mins < 0:
+        return "already started"
+    if total_mins < 60:
+        return f"{total_mins} minutes"
+    hours = total_mins // 60
+    mins = total_mins % 60
+    if mins == 0:
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    return f"{hours} hour{'s' if hours != 1 else ''} and {mins} minutes"
+
+def format_shift(s):
+    """Human-readable shift description."""
+    date = datetime.strptime(s["date"], "%Y-%m-%d")
+    day_name = date.strftime("%A")
+    date_str = date.strftime("%d %B")
+    shift_type = s["type"].capitalize()
+    return f"{shift_type} shift on {day_name} {date_str}, {s['start']} to {s['end']}"
+
+def get_week_shifts(shifts):
+    """Get all shifts in the current week (Mon-Sun)."""
+    now = datetime.now()
+    monday = (now - timedelta(days=now.weekday())).date()
+    sunday = monday + timedelta(days=6)
+    results = []
+    for s in shifts:
+        d = datetime.strptime(s["date"], "%Y-%m-%d").date()
+        if monday <= d <= sunday:
+            results.append(s)
+    results.sort(key=lambda x: x["date"])
+    return results
+
+def generate_summary(shifts):
+    """Machine-readable summary for Claude API context injection."""
+    now = datetime.now()
+    current = get_current_shift(shifts)
+    if current:
+        start_dt, end_dt = parse_shift(current)
+        remaining = time_until(end_dt)
+        return f"ON SHIFT NOW: {current['type']} shift at {current['location']}, ends at {current['end']} ({remaining} remaining)"
+
+    nxt = get_next_shift(shifts)
+    if nxt:
+        start_dt, shift = nxt[0], nxt[1]
+        until = time_until(start_dt)
+        return f"OFF DUTY. Next shift: {format_shift(shift)} (in {until})"
+
+    return "OFF DUTY. No upcoming shifts scheduled."
+
+def handle_query(text, schedule):
+    shifts = schedule["shifts"]
+    t = text.lower().strip()
+    now = datetime.now()
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+
+    # Summary mode (for Claude API injection)
+    if t == "--summary":
+        print(generate_summary(shifts))
+        return
+
+    # Add shift: "add 2026-05-06 day" or "add 2026-05-06 night"
+    if t.startswith("add "):
+        parts = t.split()
+        if len(parts) >= 3:
+            date_str = parts[1]
+            shift_type = parts[2]
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                say(f"Invalid date format. Use YYYY-MM-DD.")
+                return
+            if shift_type == "day":
+                new_shift = {"date": date_str, "type": "day", "start": "08:00", "end": "20:00", "location": "ED"}
+            elif shift_type == "night":
+                new_shift = {"date": date_str, "type": "night", "start": "20:00", "end": "08:00", "location": "ED"}
+            else:
+                say(f"Unknown shift type: {shift_type}. Use day or night.")
+                return
+            schedule["shifts"].append(new_shift)
+            schedule["shifts"].sort(key=lambda x: x["date"])
+            save_schedule(schedule)
+            say(f"Added {shift_type} shift on {date_str}.")
+            return
+        say("Usage: add YYYY-MM-DD day or add YYYY-MM-DD night")
+        return
+
+    # "This week" / "weekly schedule"
+    if "week" in t or "schedule" in t or "rota" in t:
+        week = get_week_shifts(shifts)
+        if not week:
+            say("No shifts scheduled this week.")
+            return
+        lines = [format_shift(s) for s in week]
+        say(f"You have {len(week)} shift{'s' if len(week) != 1 else ''} this week. " + ". ".join(lines) + ".")
+        return
+
+    # Currently on shift?
+    current = get_current_shift(shifts)
+    if current and ("now" in t or "current" in t or "on shift" in t):
+        start_dt, end_dt = parse_shift(current)
+        remaining = time_until(end_dt)
+        say(f"You're on a {current['type']} shift right now. It ends at {current['end']}, that's {remaining} from now.")
+        return
+
+    # "Am I working today/tonight/tomorrow"
+    if "today" in t or ("working" in t and "tomorrow" not in t and "tonight" not in t):
+        today_shifts = get_shifts_for_date(shifts, today)
+        if current:
+            start_dt, end_dt = parse_shift(current)
+            remaining = time_until(end_dt)
+            say(f"Yes, you're on a {current['type']} shift right now until {current['end']}. {remaining} remaining.")
+        elif today_shifts:
+            s = today_shifts[0]
+            start_dt, _ = parse_shift(s)
+            if start_dt > now:
+                say(f"Yes, you have a {s['type']} shift today starting at {s['start']}. That's in {time_until(start_dt)}.")
+            else:
+                say(f"You had a {s['type']} shift today, {s['start']} to {s['end']}. It's finished.")
+        else:
+            say("No, you're off today.")
+        return
+
+    if "tonight" in t:
+        # Check for night shifts starting today evening
+        for s in shifts:
+            if s["date"] == today.isoformat() and s["type"] == "night":
+                start_dt, _ = parse_shift(s)
+                if start_dt > now:
+                    say(f"Yes, you have a night shift tonight at {s['start']}. That's in {time_until(start_dt)}.")
+                else:
+                    say(f"Yes, you're on a night shift right now until {s['end']}.")
+                return
+        say("No, you're not working tonight.")
+        return
+
+    if "tomorrow" in t:
+        tmrw_shifts = get_shifts_for_date(shifts, tomorrow)
+        if tmrw_shifts:
+            s = tmrw_shifts[0]
+            say(f"Yes, you have a {s['type']} shift tomorrow, {s['start']} to {s['end']}.")
+        else:
+            say("No, you're off tomorrow.")
+        return
+
+    # "Next shift" / "when"
+    if "next" in t or "when" in t or "upcoming" in t:
+        nxt = get_next_shift(shifts)
+        if nxt:
+            start_dt, shift = nxt
+            until = time_until(start_dt)
+            say(f"Your next shift is a {format_shift(shift)}. That's in {until}.")
+        else:
+            say("No upcoming shifts scheduled.")
+        return
+
+    # "How many hours" / "how long"
+    if "hour" in t or "how long" in t or "time" in t and "start" in t:
+        if current:
+            _, end_dt = parse_shift(current)
+            say(f"Your shift ends in {time_until(end_dt)}.")
+        else:
+            nxt = get_next_shift(shifts)
+            if nxt:
+                start_dt, shift = nxt
+                say(f"Your next shift starts in {time_until(start_dt)}.")
+            else:
+                say("No upcoming shifts.")
+        return
+
+    # Default: show summary
+    current = get_current_shift(shifts)
+    if current:
+        _, end_dt = parse_shift(current)
+        say(f"You're on a {current['type']} shift until {current['end']}. {time_until(end_dt)} remaining.")
+    else:
+        nxt = get_next_shift(shifts)
+        if nxt:
+            start_dt, shift = nxt
+            say(f"You're off duty. Next: {format_shift(shift)}, in {time_until(start_dt)}.")
+        else:
+            say("No shifts scheduled.")
+
+if __name__ == "__main__":
+    schedule = load_schedule()
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
+    else:
+        query = "today"
+    handle_query(query, schedule)
