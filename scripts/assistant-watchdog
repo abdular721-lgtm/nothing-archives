@@ -92,6 +92,8 @@ refresh_notification() {
         --content "$status_line" \
         --id 1 \
         --priority high \
+        --button1 "AI assistant" \
+        --button1-action "$HOME/bin/open-dashboard" \
         > /dev/null 2>&1
 }
 

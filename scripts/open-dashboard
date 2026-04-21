@@ -1,0 +1,6 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# open-dashboard — opens AI assistant settings in Chrome
+# Called by notification button action; PATH is not set in that context.
+export PATH="/data/data/com.termux/files/home/bin:/data/data/com.termux/files/usr/bin:/usr/bin"
+/data/data/com.termux/files/usr/bin/su shell -c \
+    'am start -a android.intent.action.VIEW -d "https://127.0.0.1:8080"'
