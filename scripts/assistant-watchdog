@@ -44,12 +44,31 @@ check_and_restart() {
     fi
 }
 
-# Protect Termux from OOM killer (reapply — kernel resets on process changes)
+# Protect key processes from OOM killer (reapply — kernel resets on process changes)
 protect_oom() {
+    # Termux itself — highest priority, never kill
     local tpid
     tpid=$(pgrep -f com.termux | head -1)
     if [ -n "$tpid" ]; then
         su -c "echo -1000 > /proc/$tpid/oom_score_adj" 2>/dev/null
+    fi
+    # sshd — protect so pkill/kill commands via SSH don't trigger OOM death
+    local sshd_pid
+    sshd_pid=$(pgrep -x sshd | head -1)
+    if [ -n "$sshd_pid" ]; then
+        su -c "echo -1000 > /proc/$sshd_pid/oom_score_adj" 2>/dev/null
+    fi
+    # hey-nothing wake word daemon
+    if [ -f "$HOME/.hey-nothing.pid" ]; then
+        local hn_pid
+        hn_pid=$(cat "$HOME/.hey-nothing.pid")
+        su -c "echo -900 > /proc/$hn_pid/oom_score_adj" 2>/dev/null
+    fi
+    # Dashboard server
+    if [ -f "$HOME/.dashboard.pid" ]; then
+        local dash_pid
+        dash_pid=$(cat "$HOME/.dashboard.pid")
+        su -c "echo -900 > /proc/$dash_pid/oom_score_adj" 2>/dev/null
     fi
 }
 
@@ -102,9 +121,9 @@ while true; do
     # Check dashboard server
     check_and_restart "dashboard" \
         "$HOME/.dashboard.pid" \
-        "nohup python3 $HOME/dashboard/server.py >> $HOME/logs/dashboard.log 2>&1 &"
+        "nohup python3 $HOME/dashboard/server.py >> $HOME/logs/dashboard.log 2>&1 & echo \$! > $HOME/.dashboard.pid"
 
-    # Reapply OOM protection
+    # Reapply OOM protection to all key processes
     protect_oom
 
     # Refresh foreground notification

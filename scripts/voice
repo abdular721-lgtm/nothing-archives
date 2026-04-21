@@ -9,8 +9,6 @@ if [ "$1" = "--help" ]; then
     exit 0
 fi
 
-set -e
-
 echo "🎤 Listening..."
 TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
 
@@ -27,9 +25,6 @@ fi
 
 echo "Heard: $TEXT"
 T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
-
-# Log command to history
-ROUTED_TO="unknown"
 
 # Route based on keywords — order matters (most specific first)
 
@@ -74,10 +69,8 @@ elif [[ "$T" == *"weather"* || "$T" == *"forecast"* || "$T" == *"umbrella"* || "
     exec ~/bin/voice-weather "$TEXT"
 
 # ─── Alarm ─────────────────────────────────────────────────
-elif [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* || "$T" == *"cancel alarm"* ]]; then
+elif [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; then
     echo "→ voice-alarm"
-    ROUTED_TO="voice-alarm"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
     exec ~/bin/voice-alarm "$TEXT"
 
 elif [[ "$T" == *"youtube"* || ( "$T" == *"play"* && "$T" == *"video"* ) ]]; then
@@ -154,59 +147,10 @@ elif [[ "$T" == *"what did"* && "$T" == *"do"* ]] || [[ "$T" == *"last action"* 
     echo "→ context: last action"
     exec ~/bin/voice-context last
 
-# ─── Snooze (before alarm to catch "snooze" specifically) ──
-elif [[ "$T" == *"snooze"* ]]; then
-    echo "→ voice-alarm (snooze)"
-    ROUTED_TO="voice-alarm"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-alarm "$TEXT"
-
-# ─── Journal / diary ─────────────────────────────────────
-elif [[ "$T" == *"journal"* || "$T" == *"diary"* || "$T" == *"log my thought"* || "$T" == *"log thought"* ]]; then
-    echo "→ voice-journal"
-    ROUTED_TO="voice-journal"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-journal "$TEXT"
-
-# ─── Note intelligence ───────────────────────────────────
-elif [[ "$T" == *"summarise"* && "$T" == *"note"* ]] || [[ "$T" == *"summarize"* && "$T" == *"note"* ]] || [[ "$T" == *"note intelligence"* ]]; then
-    echo "→ voice-note-ai"
-    ROUTED_TO="voice-note-ai"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-note-ai "$TEXT"
-
-# ─── Location ────────────────────────────────────────────
-elif [[ "$T" == *"where am i"* || "$T" == *"location"* || "$T" == *"set home"* || "$T" == *"set hospital"* ]]; then
-    echo "→ voice-location"
-    ROUTED_TO="voice-location"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-location "$TEXT"
-
-# ─── Command history ─────────────────────────────────────
-elif [[ "$T" == *"history"* || "$T" == *"analytics"* || "$T" == *"what did i do"* || "$T" == *"what did I do"* || "$T" == *"most used"* ]]; then
-    echo "→ voice-history"
-    ROUTED_TO="voice-history"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-history "$TEXT"
-
-# ─── Settings ────────────────────────────────────────────
-elif [[ "$T" == *"settings"* || "$T" == *"preferences"* || "$T" == *"configuration"* || "$T" == *"change threshold"* || "$T" == *"quiet hours"* ]]; then
-    echo "→ voice-settings"
-    ROUTED_TO="voice-settings"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-settings "$TEXT"
-
-# ─── Shift schedule ──────────────────────────────────────
-elif [[ "$T" == *"shift"* || "$T" == *"working"* || "$T" == *"on call"* || "$T" == *"rota"* || "$T" == *"on duty"* || "$T" == *"off duty"* ]]; then
-    echo "→ voice-shift"
-    ROUTED_TO="voice-shift"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-shift "$TEXT"
-
 else
-    # No keyword match — send to Claude API for intelligent handling
-    echo "→ voice-claude (no keyword match)"
-    ROUTED_TO="voice-claude"
-    echo "$(date +%s)|$(date '+%Y-%m-%d %H:%M')|$TEXT|$ROUTED_TO" >> ~/logs/command-history.log
-    exec ~/bin/voice-claude "$TEXT"
+    MSG="I didn't understand: $TEXT"
+    echo "⚠️  $MSG"
+    termux-toast "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null &
+    exit 1
 fi

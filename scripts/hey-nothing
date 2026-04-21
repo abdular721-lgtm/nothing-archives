@@ -96,6 +96,23 @@ def save_stats(stats):
     except Exception:
         pass
 
+# ─── Single-instance enforcement ────────────────────────
+# Kill any existing hey-nothing instances before claiming the PID file.
+# Prevents ghost processes from OOM-crashing the mic and doubling triggers.
+_my_pid = os.getpid()
+try:
+    _existing = subprocess.run(['pgrep', '-f', 'hey-nothing'], capture_output=True, text=True)
+    for _pid_str in _existing.stdout.strip().split('\n'):
+        try:
+            _pid = int(_pid_str)
+            if _pid != _my_pid:
+                os.kill(_pid, signal.SIGTERM)
+        except (ValueError, ProcessLookupError):
+            pass
+    time.sleep(0.5)  # let the killed process release the mic
+except Exception:
+    pass
+
 # ─── Write PID ───────────────────────────────────────────
 PID_FILE.write_text(str(os.getpid()))
 
@@ -225,12 +242,20 @@ try:
 
                 log(f"WAKE WORD detected! score={score:.3f} (trigger #{stats['triggers']})")
 
+                # Kill any stuck TTS before queuing — prevents Termux:API queue buildup
+                subprocess.run(['pkill', '-f', 'termux-tts-speak'], capture_output=True)
+
                 # Acknowledge — short TTS "Yes?"
                 subprocess.Popen(
                     ['termux-tts-speak', 'Yes?'],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
+
+                # Wait for "Yes?" to finish before recording starts.
+                # Without this delay, whisper picks up the phone's own TTS output
+                # mixed with the user's command, causing bad transcriptions.
+                time.sleep(1.5)
 
                 # Launch voice router via run-voice (prevents OOM on SSH)
                 log("Launching voice router...")
