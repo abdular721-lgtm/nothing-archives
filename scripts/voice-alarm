@@ -49,6 +49,8 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
 
         termux-toast "$MSG"
         termux-tts-speak "$MSG" 2>/dev/null &
+        ~/bin/voice-context write last_action alarm
+        ~/bin/voice-context write last_alarm_time "${HOUR}:${MIN_PADDED}"
         exit 0
     fi
 

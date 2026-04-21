@@ -169,6 +169,8 @@ else:
 
     if [ -n "$QUERY" ]; then
         search_play "$QUERY"
+        ~/bin/voice-context write last_action music
+        ~/bin/voice-context write last_search "$QUERY"
     else
         media_cmd play
         say "Playing."

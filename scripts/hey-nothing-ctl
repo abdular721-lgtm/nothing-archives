@@ -92,6 +92,9 @@ do_status() {
             fi
             echo "Detections: $detections"
             echo "Cycles: $cycles"
+            echo "Skipped (ambient): ${skipped_ambient:-0}"
+            echo "Skipped (energy): ${skipped_energy:-0}"
+            echo "Empty (silence): ${empty_cycles:-0}"
 
             if [ "$last_cycle" -gt 0 ]; then
                 IDLE=$((NOW - last_cycle))

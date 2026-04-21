@@ -6,21 +6,38 @@
 # Usage: hey-nothing              (run in foreground)
 #        hey-nothing --daemon      (internal: set by hey-nothing-ctl)
 #
-# Battery note: ~10s per cycle (2s record + 5s transcribe + 3s sleep).
+# Cycle time: ~7.5s (2s record + 2.3s wait + 0.6s convert + 2.9s whisper + ~0.7s gap).
 # Adjust POLL_INTERVAL below to trade responsiveness for battery.
 
 # No set -e — daemon must survive individual cycle failures
 
-# ─── Config ───────────────────────────────────────────────
+# ─── Config defaults ─────────────────────────────────────
 LISTEN_DURATION=2        # seconds to record each cycle
-POLL_INTERVAL=3          # seconds to sleep between cycles
+POLL_INTERVAL=1          # seconds to sleep between cycles (low = responsive, high = battery saver)
+POLL_INTERVAL_SCREEN_OFF=8  # seconds between cycles when screen is off
 COOLDOWN=15              # seconds to wait after triggering voice router
 MAX_ERRORS=10            # consecutive errors before backing off
 ERROR_BACKOFF=30         # seconds to sleep after MAX_ERRORS consecutive failures
+ENERGY_THRESHOLD=500     # RMS threshold — below this = silence, skip whisper
+SCREEN_AWARE=true        # adapt poll interval based on screen state
+QUIET_HOURS_START=0      # hour (24h) to start quiet mode
+QUIET_HOURS_END=6        # hour (24h) to end quiet mode
+QUIET_POLL_INTERVAL=30   # seconds between cycles during quiet hours
 PID_FILE="$HOME/.hey-nothing.pid"
 LOG_DIR="$HOME/logs"
 STATS_FILE="$HOME/.hey-nothing-stats"
-WAKE_PHRASES="hey nothing|a nothing|hey nah thing|hey nan thing|nothing phone|hey nasim"
+CONFIG_FILE="$HOME/.hey-nothing-config"
+
+# ─── Load config file (overrides defaults) ───────────────
+if [ -f "$CONFIG_FILE" ]; then
+    . "$CONFIG_FILE"
+fi
+# Single-word triggers (matched as whole words or entire utterance)
+SINGLE_TRIGGERS="nothing|assistant|computer"
+# Multi-word triggers (matched as phrase anywhere in text)
+MULTI_TRIGGERS="hey nothing|a nothing|hey nah thing|hey nan thing|nothing phone|hey nasim|hey assistant|okay nothing|ok nothing|yo nothing|hello nothing|hi nothing|hey phone"
+# Max words for a valid wake command (longer = ambient speech, not a wake word)
+MAX_WAKE_WORDS=6
 
 mkdir -p "$LOG_DIR"
 
@@ -39,14 +56,53 @@ echo $$ > "$PID_FILE"
 STARTED_AT=$(date +%s)
 DETECTIONS=0
 CYCLES=0
+SKIPPED_AMBIENT=0
+SKIPPED_ENERGY=0
+EMPTY_CYCLES=0
 
 save_stats() {
     cat > "$STATS_FILE" <<STATS
 started=$STARTED_AT
 detections=$DETECTIONS
 cycles=$CYCLES
+skipped_ambient=$SKIPPED_AMBIENT
+skipped_energy=$SKIPPED_ENERGY
+empty_cycles=$EMPTY_CYCLES
 last_cycle=$(date +%s)
 STATS
+}
+
+# ─── Screen state check ──────────────────────────────────
+is_screen_on() {
+    su shell -c 'dumpsys power' 2>/dev/null | grep -q 'mWakefulness=Awake'
+}
+
+# ─── Quiet hours check ──────────────────────────────────
+is_quiet_hours() {
+    local HOUR
+    HOUR=$(date +%H | sed 's/^0//')
+    if [ "$QUIET_HOURS_START" -le "$QUIET_HOURS_END" ]; then
+        # Simple range: e.g. 0-6
+        [ "$HOUR" -ge "$QUIET_HOURS_START" ] && [ "$HOUR" -lt "$QUIET_HOURS_END" ]
+    else
+        # Wrap-around: e.g. 23-6
+        [ "$HOUR" -ge "$QUIET_HOURS_START" ] || [ "$HOUR" -lt "$QUIET_HOURS_END" ]
+    fi
+}
+
+# ─── Dynamic poll interval ──────────────────────────────
+get_poll_interval() {
+    # Quiet hours takes priority
+    if is_quiet_hours; then
+        echo "$QUIET_POLL_INTERVAL"
+        return
+    fi
+    # Screen-aware polling
+    if [ "$SCREEN_AWARE" = "true" ] && ! is_screen_on; then
+        echo "$POLL_INTERVAL_SCREEN_OFF"
+        return
+    fi
+    echo "$POLL_INTERVAL"
 }
 
 # ─── Acknowledgement sound ───────────────────────────────
@@ -61,8 +117,12 @@ ack() {
 
 # ─── Main loop ────────────────────────────────────────────
 echo "$(date '+%H:%M:%S') Hey Nothing daemon started (PID $$)"
-echo "  Listen: ${LISTEN_DURATION}s | Poll interval: ${POLL_INTERVAL}s | Cooldown: ${COOLDOWN}s"
-echo "  Wake phrases: $WAKE_PHRASES"
+echo "  Listen: ${LISTEN_DURATION}s | Poll: ${POLL_INTERVAL}s (screen-off: ${POLL_INTERVAL_SCREEN_OFF}s) | Cooldown: ${COOLDOWN}s"
+echo "  Energy gate: RMS < $ENERGY_THRESHOLD = skip whisper | Screen-aware: $SCREEN_AWARE"
+echo "  Quiet hours: ${QUIET_HOURS_START}:00-${QUIET_HOURS_END}:00 (poll: ${QUIET_POLL_INTERVAL}s)"
+echo "  Multi-triggers: $MULTI_TRIGGERS"
+echo "  Single-triggers: $SINGLE_TRIGGERS (at start or entire utterance)"
+echo "  Max wake words: $MAX_WAKE_WORDS"
 echo ""
 
 CONSECUTIVE_ERRORS=0
@@ -71,7 +131,8 @@ while true; do
     CYCLES=$((CYCLES + 1))
 
     # Record and transcribe with tiny.en (fastest model)
-    HEARD=$( ~/bin/whisper-listen --fast "$LISTEN_DURATION" 2>/dev/null | tr -d '\r\n' ) || true
+    # Energy gate skips whisper if audio is silence — saves ~3s per quiet cycle
+    HEARD=$( ~/bin/whisper-listen --fast --energy-gate "$ENERGY_THRESHOLD" "$LISTEN_DURATION" 2>/dev/null | tr -d '\r\n' ) || true
     HEARD_LOWER=$(echo "$HEARD" | tr '[:upper:]' '[:lower:]')
 
     # Strip whisper hallucination tags that leak through
@@ -85,16 +146,55 @@ while true; do
     # Check for wake phrase
     DETECTED=0
     if [ -n "$HEARD_LOWER" ] && [ ${#HEARD_LOWER} -gt 1 ]; then
-        IFS='|' read -ra PHRASES <<< "$WAKE_PHRASES"
-        for phrase in "${PHRASES[@]}"; do
-            if [[ "$HEARD_LOWER" == *"$phrase"* ]]; then
-                DETECTED=1
-                break
-            fi
-        done
         CONSECUTIVE_ERRORS=0  # got audio — reset error counter
+
+        # Count words
+        read -ra WORDS <<< "$HEARD_LOWER"
+        WORD_COUNT=${#WORDS[@]}
+
+        # Skip ambient speech (too many words = someone talking, not a wake command)
+        if [ "$WORD_COUNT" -gt "$MAX_WAKE_WORDS" ]; then
+            SKIPPED_AMBIENT=$((SKIPPED_AMBIENT + 1))
+            if [ "$CYCLES" -le 5 ] || [ $((CYCLES % 50)) -eq 0 ]; then
+                echo "$(date '+%H:%M:%S')   skipped: ambient speech ($WORD_COUNT words)"
+            fi
+        else
+            # Check multi-word triggers (phrase match anywhere)
+            IFS='|' read -ra PHRASES <<< "$MULTI_TRIGGERS"
+            for phrase in "${PHRASES[@]}"; do
+                if [[ "$HEARD_LOWER" == *"$phrase"* ]]; then
+                    DETECTED=1
+                    break
+                fi
+            done
+
+            # Check single-word triggers (must be at start or entire utterance)
+            if [ "$DETECTED" -eq 0 ]; then
+                FIRST_WORD="${WORDS[0]}"
+                IFS='|' read -ra SINGLES <<< "$SINGLE_TRIGGERS"
+                for trigger in "${SINGLES[@]}"; do
+                    if [[ "$FIRST_WORD" == "$trigger" ]] || { [ "$WORD_COUNT" -eq 1 ] && [[ "$HEARD_LOWER" == "$trigger" ]]; }; then
+                        DETECTED=1
+                        break
+                    fi
+                done
+            fi
+
+            # Also check: "nothing" as standalone word in first 2 positions
+            # (avoids "I have nothing to do" false positives)
+            if [ "$DETECTED" -eq 0 ]; then
+                for idx in 0 1; do
+                    if [ "$idx" -lt "$WORD_COUNT" ] && [[ "${WORDS[$idx]}" == "nothing" ]]; then
+                        DETECTED=1
+                        break
+                    fi
+                done
+            fi
+        fi
     else
-        # Empty result — could be silence or mic failure
+        # Empty result — silence (energy gated) or mic failure
+        EMPTY_CYCLES=$((EMPTY_CYCLES + 1))
+        SKIPPED_ENERGY=$((SKIPPED_ENERGY + 1))
         CONSECUTIVE_ERRORS=$((CONSECUTIVE_ERRORS + 1))
         if [ "$CONSECUTIVE_ERRORS" -ge "$MAX_ERRORS" ]; then
             echo "$(date '+%H:%M:%S') WARNING: $CONSECUTIVE_ERRORS consecutive empty results — backing off ${ERROR_BACKOFF}s"
@@ -123,6 +223,8 @@ while true; do
         if [ $((CYCLES % 50)) -eq 0 ]; then
             save_stats
         fi
-        sleep "$POLL_INTERVAL"
+        # Dynamic poll interval: quiet hours > screen-off > normal
+        CURRENT_INTERVAL=$(get_poll_interval)
+        sleep "$CURRENT_INTERVAL"
     fi
 done

@@ -74,6 +74,8 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
         if launch_app "$MATCHED_TARGET"; then
             termux-toast "$MSG"
             termux-tts-speak "$MSG" 2>/dev/null &
+            ~/bin/voice-context write last_action open
+            ~/bin/voice-context write last_app_opened "$MATCHED_NAME"
             exit 0
         else
             MSG="Launch failed: $MATCHED_NAME"

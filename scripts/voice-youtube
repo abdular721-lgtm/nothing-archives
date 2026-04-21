@@ -36,3 +36,5 @@ am start -a android.intent.action.VIEW \
 MSG="Searching YouTube for $QUERY"
 termux-toast "$MSG"
 termux-tts-speak "$MSG" 2>/dev/null &
+~/bin/voice-context write last_action youtube
+~/bin/voice-context write last_search "$QUERY"

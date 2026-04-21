@@ -85,6 +85,9 @@ elif [[ "$T" == *"call"* || "$T" == *"phone"* || "$T" == *"ring"* || "$T" == *"d
 
     echo "  Found: $MATCHED_NAME ($MATCHED_NUM)"
     say "Calling $MATCHED_NAME"
+    ~/bin/voice-context write last_action call
+    ~/bin/voice-context write last_contact "$MATCHED_NAME"
+    ~/bin/voice-context write last_contact_number "$CLEAN_NUM"
 
     # Try ACTION_CALL first (auto-dials), fall back to ACTION_DIAL (shows dialer)
     am start -a android.intent.action.CALL -d "tel:$CLEAN_NUM" > /dev/null 2>&1 || \

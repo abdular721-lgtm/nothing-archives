@@ -73,3 +73,5 @@ echo "─────────────"
 
 termux-toast "$MSG"
 termux-tts-speak "$MSG" 2>/dev/null &
+~/bin/voice-context write last_action note
+~/bin/voice-context write last_note_file "$FILEPATH"

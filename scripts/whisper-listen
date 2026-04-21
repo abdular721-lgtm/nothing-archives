@@ -3,10 +3,11 @@
 # Model: base.en (142MB, ~5.4s transcription on Dimensity 7200 Pro)
 # Fallback: tiny.en (~2.7s, lower accuracy) auto-selected if base.en >10s
 #
-# Usage: whisper-listen [--fast|--accurate] [DURATION]
-#   --fast      Force tiny.en regardless of benchmark
-#   --accurate  Force base.en regardless of benchmark
-#   DURATION    Recording duration in seconds (default 5)
+# Usage: whisper-listen [--fast|--accurate] [--energy-gate THRESHOLD] [DURATION]
+#   --fast              Force tiny.en regardless of benchmark
+#   --accurate          Force base.en regardless of benchmark
+#   --energy-gate N     Skip whisper if audio RMS < N (0-32768). 500 = good silence threshold.
+#   DURATION            Recording duration in seconds (default 5)
 
 set -e
 
@@ -15,11 +16,13 @@ WHISPER="$HOME/whisper.cpp/build/bin/whisper-cli"
 
 # ─── Parse flags ──────────────────────────────────────────
 FORCE_MODEL=""
+ENERGY_GATE=0
 while [[ "$1" == --* ]]; do
     case "$1" in
-        --fast)     FORCE_MODEL="tiny.en"; shift ;;
-        --accurate) FORCE_MODEL="base.en"; shift ;;
-        *)          shift ;;  # ignore unknown flags
+        --fast)         FORCE_MODEL="tiny.en"; shift ;;
+        --accurate)     FORCE_MODEL="base.en"; shift ;;
+        --energy-gate)  ENERGY_GATE="${2:-500}"; shift 2 ;;
+        *)              shift ;;  # ignore unknown flags
     esac
 done
 
@@ -60,22 +63,43 @@ rm -f "$RAW" "$WAV"
 termux-microphone-record -f "$RAW" -l "$DURATION" -e wav > /dev/null 2>&1
 
 # Wait for recording to finish + flush
-sleep $((DURATION + 1))
+# -l flag stops recording after DURATION; small buffer for Android media pipeline
+sleep "$DURATION"
+sleep 0.3
 termux-microphone-record -q > /dev/null 2>&1 || true
 
-# Wait until file size stabilises (max 3s)
+# Wait until file size stabilises (max 1.5s with fast checks)
 prev_size=0
-for i in 1 2 3; do
+for i in 1 2 3 4 5; do
     curr_size=$(stat -c%s "$RAW" 2>/dev/null || echo 0)
     if [ "$curr_size" -gt 0 ] && [ "$curr_size" = "$prev_size" ]; then
         break
     fi
     prev_size=$curr_size
-    sleep 1
+    sleep 0.3
 done
 
 # Convert to 16kHz mono WAV
 ffmpeg -y -i "$RAW" -ar 16000 -ac 1 -c:a pcm_s16le "$WAV" > /dev/null 2>&1
+
+# Energy gate: skip whisper if audio is too quiet (saves ~3s per silent cycle)
+if [ "$ENERGY_GATE" -gt 0 ] && [ -f "$WAV" ]; then
+    RMS=$(python3 -c "
+import wave, struct, math
+try:
+    with wave.open('$WAV', 'rb') as f:
+        frames = f.readframes(f.getnframes())
+        samples = struct.unpack('<' + 'h' * (len(frames) // 2), frames)
+        rms = math.sqrt(sum(s * s for s in samples) / max(len(samples), 1))
+        print(int(rms))
+except:
+    print(99999)
+" 2>/dev/null)
+    if [ "${RMS:-0}" -lt "$ENERGY_GATE" ]; then
+        # Silence — skip whisper entirely
+        exit 0
+    fi
+fi
 
 # Transcribe + time it for benchmark
 START_S=$SECONDS

@@ -182,6 +182,10 @@ elif [[ "$T" == *"send"* || "$T" == *"text"* || "$T" == *"sms"* ]]; then
     if [[ "$CONFIRM" == *"yes"* || "$CONFIRM" == *"yeah"* || "$CONFIRM" == *"sure"* || "$CONFIRM" == *"send"* || "$CONFIRM" == *"confirm"* ]]; then
         termux-sms-send -n "$MATCHED_NUM" "$MSG_BODY"
         say "Message sent to $MATCHED_NAME."
+        ~/bin/voice-context write last_action sms
+        ~/bin/voice-context write last_contact "$MATCHED_NAME"
+        ~/bin/voice-context write last_contact_number "$MATCHED_NUM"
+        ~/bin/voice-context write last_message "$MSG_BODY"
     else
         say "Message cancelled."
     fi

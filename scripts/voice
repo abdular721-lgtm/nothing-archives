@@ -96,6 +96,11 @@ elif [[ "$T" == *"wifi"* || "$T" == *"wi-fi"* || "$T" == *"bluetooth"* || "$T" =
     echo "→ voice-toggle"
     exec ~/bin/voice-toggle "$TEXT"
 
+# ─── Smart home (after toggle to avoid catching wifi/bluetooth) ─
+elif [[ "$T" == *"light"* || "$T" == *"lamp"* || "$T" == *"fan"* || "$T" == *"smart home"* || "$T" == *"heater"* ]] || [[ ( "$T" == *"turn on"* || "$T" == *"turn off"* ) && "$T" != *"wifi"* && "$T" != *"bluetooth"* && "$T" != *"data"* && "$T" != *"airplane"* && "$T" != *"flashlight"* && "$T" != *"torch"* ]]; then
+    echo "→ voice-home"
+    exec ~/bin/voice-home "$TEXT"
+
 elif [[ "$T" == *"time"* || "$T" == *"date"* || "$T" == *"today"* || "$T" == *"battery"* || "$T" == *"charge"* || "$T" == *"storage"* || "$T" == *"free space"* || "$T" == *"ip"* || "$T" == *"wifi name"* || "$T" == *"connected to"* || "$T" == *"signal"* || "$T" == *"what day"* ]]; then
     echo "→ voice-info"
     exec ~/bin/voice-info "$TEXT"
@@ -115,6 +120,34 @@ elif [[ "$T" == *"list"* && "$T" == *"note"* ]] || [[ "$T" == *"show"* && "$T" =
 elif [[ "$T" == *"note"* || "$T" == *"remember"* || "$T" == *"write down"* ]]; then
     echo "→ voice-note"
     exec ~/bin/voice-note "$TEXT"
+
+# ─── Context commands (repeat/again) ─────────────────────
+elif [[ "$T" == *"again"* || "$T" == *"repeat"* || "$T" == *"do it again"* ]]; then
+    echo "→ context: repeat last action"
+    LAST_ACTION=$(~/bin/voice-context read last_action)
+    case "$LAST_ACTION" in
+        alarm)    exec ~/bin/voice-alarm ;;
+        call)     CONTACT=$(~/bin/voice-context read last_contact); exec ~/bin/voice-call "call $CONTACT" ;;
+        sms)      CONTACT=$(~/bin/voice-context read last_contact); MSG=$(~/bin/voice-context read last_message); exec ~/bin/voice-sms "text $CONTACT" ;;
+        open)     APP=$(~/bin/voice-context read last_app_opened); exec ~/bin/voice-open "open $APP" ;;
+        music)    QUERY=$(~/bin/voice-context read last_search); exec ~/bin/voice-music "play $QUERY" ;;
+        youtube)  QUERY=$(~/bin/voice-context read last_search); exec ~/bin/voice-youtube "play $QUERY" ;;
+        note)     exec ~/bin/voice-note ;;
+        *)        echo "No recent action to repeat"; termux-tts-speak "No recent action to repeat" 2>/dev/null; exit 1 ;;
+    esac
+
+elif [[ "$T" == *"call"* && ( "$T" == *"back"* || "$T" == *"them"* ) ]]; then
+    echo "→ context: call back"
+    CONTACT=$(~/bin/voice-context read last_contact)
+    if [ -n "$CONTACT" ]; then
+        exec ~/bin/voice-call "call $CONTACT"
+    else
+        echo "No recent contact"; termux-tts-speak "No recent contact to call back" 2>/dev/null; exit 1
+    fi
+
+elif [[ "$T" == *"what did"* && "$T" == *"do"* ]] || [[ "$T" == *"last action"* || "$T" == *"what was that"* ]]; then
+    echo "→ context: last action"
+    exec ~/bin/voice-context last
 
 else
     MSG="I didn't understand: $TEXT"

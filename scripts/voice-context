@@ -1,0 +1,125 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice context — shared state store for voice scripts
+# Usage:
+#   voice-context write KEY VALUE   — set a context key
+#   voice-context read KEY          — get value (empty if expired)
+#   voice-context read-all          — dump all non-expired context
+#   voice-context clear             — clear all context
+#   voice-context last              — speak the last action summary
+#
+# Context expires after 10 minutes (600 seconds).
+# Stored in ~/.voice-context.json
+
+CTX_FILE="$HOME/.voice-context.json"
+TTL=600  # seconds
+
+case "${1:-}" in
+    write)
+        KEY="$2"
+        VALUE="$3"
+        if [ -z "$KEY" ] || [ -z "$VALUE" ]; then
+            echo "Usage: voice-context write KEY VALUE"
+            exit 1
+        fi
+        python3 -c "
+import json, time, sys
+path = '$CTX_FILE'
+try:
+    with open(path) as f:
+        ctx = json.load(f)
+except:
+    ctx = {}
+ctx['$KEY'] = '''$VALUE'''
+ctx['timestamp'] = int(time.time())
+with open(path, 'w') as f:
+    json.dump(ctx, f, indent=2)
+" 2>/dev/null
+        ;;
+
+    read)
+        KEY="$2"
+        if [ -z "$KEY" ]; then
+            echo "Usage: voice-context read KEY"
+            exit 1
+        fi
+        python3 -c "
+import json, time
+path = '$CTX_FILE'
+try:
+    with open(path) as f:
+        ctx = json.load(f)
+    ts = ctx.get('timestamp', 0)
+    if time.time() - ts > $TTL:
+        print('')  # expired
+    else:
+        print(ctx.get('$KEY', ''))
+except:
+    print('')
+" 2>/dev/null
+        ;;
+
+    read-all)
+        python3 -c "
+import json, time
+path = '$CTX_FILE'
+try:
+    with open(path) as f:
+        ctx = json.load(f)
+    ts = ctx.get('timestamp', 0)
+    age = int(time.time() - ts)
+    if age > $TTL:
+        print('Context expired ({age}s ago)')
+    else:
+        print(f'Context (age: {age}s):')
+        for k, v in ctx.items():
+            if k != 'timestamp':
+                print(f'  {k}: {v}')
+except FileNotFoundError:
+    print('No context')
+except:
+    print('Error reading context')
+" 2>/dev/null
+        ;;
+
+    clear)
+        rm -f "$CTX_FILE"
+        echo "Context cleared"
+        ;;
+
+    last)
+        SUMMARY=$(python3 -c "
+import json, time
+path = '$CTX_FILE'
+try:
+    with open(path) as f:
+        ctx = json.load(f)
+    ts = ctx.get('timestamp', 0)
+    if time.time() - ts > $TTL:
+        print('No recent actions.')
+    else:
+        action = ctx.get('last_action', 'unknown')
+        parts = [f'Last action: {action}']
+        if ctx.get('last_contact'):
+            parts.append(f'Contact: {ctx[\"last_contact\"]}')
+        if ctx.get('last_search'):
+            parts.append(f'Search: {ctx[\"last_search\"]}')
+        if ctx.get('last_alarm_time'):
+            parts.append(f'Alarm: {ctx[\"last_alarm_time\"]}')
+        if ctx.get('last_message'):
+            msg = ctx['last_message'][:50]
+            parts.append(f'Message: {msg}')
+        if ctx.get('last_app_opened'):
+            parts.append(f'App: {ctx[\"last_app_opened\"]}')
+        print('. '.join(parts) + '.')
+except:
+    print('No recent actions.')
+" 2>/dev/null)
+        echo "$SUMMARY"
+        termux-tts-speak "$SUMMARY" 2>/dev/null
+        ;;
+
+    *)
+        echo "Usage: voice-context {write|read|read-all|clear|last} [KEY] [VALUE]"
+        exit 1
+        ;;
+esac

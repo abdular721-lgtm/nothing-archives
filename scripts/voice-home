@@ -1,0 +1,193 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled smart home — HTTP foundation
+# Supports: Home Assistant, n8n webhook, or direct smart plug APIs
+# Usage: voice-home "turn on the lights"
+#        voice-home "lights off"
+#        voice-home "dim the lights"
+#
+# Config: ~/.smart-home-config
+# Device registry: ~/.smart-home-devices.json
+
+if [ "$1" = "--help" ]; then
+    MSG="Voice home: turn on or off lights and devices, dim lights, or ask what's on. Configure endpoints in dot smart-home-config."
+    echo "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null
+    exit 0
+fi
+
+CONFIG="$HOME/.smart-home-config"
+DEVICES_FILE="$HOME/.smart-home-devices.json"
+LOG="$HOME/logs/voice-home.log"
+
+mkdir -p "$HOME/logs"
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+log_cmd() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | $1" >> "$LOG"
+}
+
+# ─── Load config ─────────────────────────────────────────
+HOME_ASSISTANT_URL=""
+HOME_ASSISTANT_TOKEN=""
+N8N_WEBHOOK_URL=""
+
+if [ -f "$CONFIG" ]; then
+    . "$CONFIG"
+fi
+
+# ─── Check if configured ────────────────────────────────
+is_configured() {
+    [ -n "$HOME_ASSISTANT_URL" ] || [ -n "$N8N_WEBHOOK_URL" ]
+}
+
+# ─── Send command to hub ────────────────────────────────
+send_to_hub() {
+    local DEVICE="$1"
+    local ACTION="$2"
+    local VALUE="$3"
+
+    if [ -n "$HOME_ASSISTANT_URL" ]; then
+        # Home Assistant REST API
+        local DOMAIN="light"
+        local SERVICE="turn_${ACTION}"
+        [[ "$ACTION" == "dim" ]] && SERVICE="turn_on"
+
+        local PAYLOAD="{\"entity_id\": \"${DOMAIN}.${DEVICE}\"}"
+        if [ "$ACTION" = "dim" ] && [ -n "$VALUE" ]; then
+            # Convert percentage (0-100) to HA brightness (0-255)
+            local BRIGHTNESS=$((VALUE * 255 / 100))
+            PAYLOAD="{\"entity_id\": \"${DOMAIN}.${DEVICE}\", \"brightness\": ${BRIGHTNESS}}"
+        fi
+
+        RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${HOME_ASSISTANT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "${HOME_ASSISTANT_URL}/api/services/${DOMAIN}/${SERVICE}" 2>/dev/null)
+
+        if [ "$RESULT" = "200" ] || [ "$RESULT" = "201" ]; then
+            return 0
+        fi
+        return 1
+
+    elif [ -n "$N8N_WEBHOOK_URL" ]; then
+        # n8n webhook — pass device, action, value
+        RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "{\"device\": \"${DEVICE}\", \"action\": \"${ACTION}\", \"value\": \"${VALUE}\"}" \
+            "${N8N_WEBHOOK_URL}" 2>/dev/null)
+
+        if [ "$RESULT" = "200" ] || [ "$RESULT" = "201" ]; then
+            return 0
+        fi
+        return 1
+    fi
+
+    return 1
+}
+
+# ─── Parse input ─────────────────────────────────────────
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "Say a smart home command: turn on/off [device], dim lights"
+    TEXT=$(~/bin/whisper-listen 7 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "Nothing heard"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# ─── Extract device and action ───────────────────────────
+DEVICE=""
+ACTION=""
+DIM_VALUE=""
+
+# Dim / percentage
+if [[ "$T" == *"dim"* ]] || [[ "$T" =~ [0-9]+[[:space:]]*percent ]]; then
+    ACTION="dim"
+    DIM_VALUE=$(echo "$T" | grep -oE '[0-9]+' | head -1)
+    [ -z "$DIM_VALUE" ] && DIM_VALUE="50"
+fi
+
+# Turn on/off
+if [[ "$T" == *"turn on"* || "$T" == *"switch on"* ]]; then
+    ACTION="on"
+elif [[ "$T" == *"turn off"* || "$T" == *"switch off"* ]]; then
+    ACTION="off"
+elif [[ "$T" == *" on" ]] && [ -z "$ACTION" ]; then
+    ACTION="on"
+elif [[ "$T" == *" off" ]] && [ -z "$ACTION" ]; then
+    ACTION="off"
+fi
+
+# Extract device name
+# Common devices
+if [[ "$T" == *"light"* || "$T" == *"lamp"* ]]; then
+    DEVICE="lights"
+elif [[ "$T" == *"fan"* ]]; then
+    DEVICE="fan"
+elif [[ "$T" == *"ac"* || "$T" == *"air condition"* ]]; then
+    DEVICE="ac"
+elif [[ "$T" == *"tv"* || "$T" == *"television"* ]]; then
+    DEVICE="tv"
+elif [[ "$T" == *"heater"* ]]; then
+    DEVICE="heater"
+elif [[ "$T" == *"plug"* || "$T" == *"outlet"* ]]; then
+    DEVICE="smart_plug"
+fi
+
+# Default action for device-only commands
+if [ -n "$DEVICE" ] && [ -z "$ACTION" ]; then
+    ACTION="on"  # "lights" alone = turn on
+fi
+
+# ─── What's on query ─────────────────────────────────────
+if [[ "$T" == *"what"*"on"* || "$T" == *"which"*"on"* || "$T" == *"status"* ]]; then
+    if ! is_configured; then
+        say "Smart home not configured. Add your Home Assistant URL to dot smart-home-config."
+        log_cmd "STUB: status query | $TEXT"
+        exit 0
+    fi
+    # TODO: Query HA states API when configured
+    say "Device status check requires Home Assistant. Not yet configured."
+    log_cmd "status query | $TEXT"
+    exit 0
+fi
+
+# ─── Validate ────────────────────────────────────────────
+if [ -z "$DEVICE" ] || [ -z "$ACTION" ]; then
+    say "I heard: $TEXT. Please say turn on or off followed by a device name."
+    log_cmd "UNRECOGNIZED: $TEXT"
+    exit 1
+fi
+
+# ─── Execute ─────────────────────────────────────────────
+if ! is_configured; then
+    # Stub mode — log for future replay (log BEFORE tts to survive OOM)
+    log_cmd "STUB: $ACTION $DEVICE ${DIM_VALUE:+(${DIM_VALUE}%)} | $TEXT"
+    say "Smart home not configured. Add your Home Assistant URL to dot smart-home-config. Logged: $ACTION $DEVICE."
+    exit 0
+fi
+
+log_cmd "EXEC: $ACTION $DEVICE ${DIM_VALUE:+(${DIM_VALUE}%)} | $TEXT"
+
+if send_to_hub "$DEVICE" "$ACTION" "$DIM_VALUE"; then
+    if [ "$ACTION" = "dim" ]; then
+        say "$DEVICE dimmed to ${DIM_VALUE} percent."
+    else
+        say "$DEVICE turned $ACTION."
+    fi
+    ~/bin/voice-context write last_action home
+    ~/bin/voice-context write last_app_opened "$DEVICE"
+else
+    say "Failed to control $DEVICE. Check your smart home configuration."
+fi
