@@ -1,0 +1,179 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Voice-controlled music playback
+# Usage: voice-music "play"
+#        voice-music "pause"
+#        voice-music "next song"
+#        voice-music "play taylor swift"
+#        voice-music "what's playing"
+#        voice-music "louder"
+#
+# Controls: Android media session (works with any active player)
+# Search: YouTube Music (primary), YouTube (fallback)
+
+if [ "$1" = "--help" ]; then
+    MSG="Voice music: play, pause, stop, next, skip, previous, volume up or down, mute, shuffle, what's playing, or play a song name to search YouTube Music."
+    echo "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null
+    exit 0
+fi
+
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    echo "Say a music command: play, pause, next, skip, what's playing, play [song]"
+    TEXT=$(~/bin/whisper-listen 7 | tr -d '\r\n')
+fi
+
+if [ -z "$TEXT" ]; then
+    echo "Nothing heard"
+    exit 1
+fi
+
+echo "Heard: $TEXT"
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+say() {
+    echo "  $1"
+    termux-tts-speak "$1" 2>/dev/null
+}
+
+media_cmd() {
+    su shell -c "cmd media_session dispatch $1" 2>/dev/null
+}
+
+# ─── NOW PLAYING ──────────────────────────────────────────
+now_playing() {
+    INFO=$(su shell -c 'dumpsys media_session' 2>/dev/null | python3 -c "
+import sys, re
+
+text = sys.stdin.read()
+title = ''
+artist = ''
+album = ''
+
+# Look for metadata block
+for line in text.split('\n'):
+    line = line.strip()
+    if 'TITLE' in line and '=' in line:
+        title = line.split('=', 1)[1].strip()
+    elif 'ARTIST' in line and '=' in line:
+        artist = line.split('=', 1)[1].strip()
+    elif 'ALBUM' in line and '=' in line and not album:
+        album = line.split('=', 1)[1].strip()
+
+if title:
+    msg = f'Now playing: {title}'
+    if artist:
+        msg += f' by {artist}'
+    print(msg)
+else:
+    print('Nothing is currently playing.')
+" 2>/dev/null)
+
+    say "${INFO:-Nothing is currently playing.}"
+}
+
+# ─── SEARCH AND PLAY ─────────────────────────────────────
+search_play() {
+    local QUERY="$1"
+
+    # URL-encode the query
+    ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$QUERY'''))")
+
+    # Try YouTube Music first (installed on this device)
+    if su shell -c "pm list packages 2>/dev/null" | grep -q 'com.google.android.apps.youtube.music'; then
+        su shell -c "am start -a android.intent.action.VIEW -d 'https://music.youtube.com/search?q=${ENCODED}' -p com.google.android.apps.youtube.music" 2>/dev/null
+        say "Searching YouTube Music for $QUERY."
+    else
+        # Fallback to YouTube
+        su shell -c "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/results?search_query=${ENCODED}'" 2>/dev/null
+        say "Searching YouTube for $QUERY."
+    fi
+}
+
+# ─── VOLUME CONTROL ──────────────────────────────────────
+adjust_volume() {
+    local DIR="$1"
+    su shell -c "cmd media_session volume --stream 3 --adj $DIR --show" 2>/dev/null
+}
+
+# ─── ROUTE ────────────────────────────────────────────────
+
+# Play/resume
+if [[ "$T" == "play" || "$T" == "resume" || "$T" == "resume music" || "$T" == "play music" || "$T" == "continue" || "$T" == "unpause" ]]; then
+    media_cmd play
+    say "Playing."
+
+# Pause/stop
+elif [[ "$T" == "pause" || "$T" == "pause music" || "$T" == "stop" || "$T" == "stop music" || "$T" == "stop playing" ]]; then
+    media_cmd pause
+    say "Paused."
+
+# Next/skip
+elif [[ "$T" == *"next"* || "$T" == *"skip"* ]]; then
+    media_cmd next
+    say "Next track."
+
+# Previous
+elif [[ "$T" == *"previous"* || "$T" == *"back"* || "$T" == *"go back"* || "$T" == *"last song"* ]]; then
+    media_cmd previous
+    say "Previous track."
+
+# What's playing
+elif [[ "$T" == *"what"*"playing"* || "$T" == *"now playing"* || "$T" == *"current song"* || "$T" == *"what song"* || "$T" == *"what is this"* ]]; then
+    now_playing
+
+# Volume up
+elif [[ "$T" == *"louder"* || "$T" == *"volume up"* || "$T" == *"turn up"* || "$T" == *"raise"* ]]; then
+    adjust_volume raise
+    say "Volume up."
+
+# Volume down
+elif [[ "$T" == *"quieter"* || "$T" == *"softer"* || "$T" == *"volume down"* || "$T" == *"turn down"* || "$T" == *"lower"* ]]; then
+    adjust_volume lower
+    say "Volume down."
+
+# Mute
+elif [[ "$T" == *"mute"* ]]; then
+    adjust_volume lower
+    adjust_volume lower
+    adjust_volume lower
+    su shell -c "cmd media_session volume --stream 3 --set 0" 2>/dev/null
+    say "Muted."
+
+# Shuffle
+elif [[ "$T" == *"shuffle"* ]]; then
+    say "Shuffle toggled. Check the app for confirmation."
+    # No universal shuffle via media_session — would need app-specific control
+
+# Search and play: "play [something]"
+elif [[ "$T" == *"play "* || "$T" == *"put on "* || "$T" == *"search "* || "$T" == *"listen to "* ]]; then
+    # Extract search query by removing command prefix
+    QUERY=$(echo "$TEXT" | python3 -c "
+import re, sys
+text = sys.stdin.read().strip()
+t = text.lower()
+for prefix in ['play ', 'put on ', 'search for ', 'search ', 'listen to ']:
+    if t.startswith(prefix):
+        print(text[len(prefix):].strip())
+        break
+else:
+    # 'play' might be mid-sentence: 'can you play X'
+    m = re.search(r'(?:play|put on|listen to)\s+(.+)', t)
+    if m:
+        start = m.start(1)
+        print(text[start:].strip())
+    else:
+        print(text)
+" 2>/dev/null)
+
+    if [ -n "$QUERY" ]; then
+        search_play "$QUERY"
+    else
+        media_cmd play
+        say "Playing."
+    fi
+
+else
+    say "Music command not recognized. Try: play, pause, next, skip, what's playing."
+fi

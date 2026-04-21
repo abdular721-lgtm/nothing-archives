@@ -1,0 +1,123 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Control script for the Hey Nothing wake word daemon
+# Usage: hey-nothing-ctl start|stop|status|restart
+
+PID_FILE="$HOME/.hey-nothing.pid"
+STATS_FILE="$HOME/.hey-nothing-stats"
+DAEMON="$HOME/bin/hey-nothing"
+LOG_DIR="$HOME/logs"
+
+mkdir -p "$LOG_DIR"
+
+is_running() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            return 0
+        fi
+        # Stale PID file
+        rm -f "$PID_FILE"
+    fi
+    return 1
+}
+
+do_start() {
+    if is_running; then
+        PID=$(cat "$PID_FILE")
+        echo "Already running (PID $PID)"
+        return 0
+    fi
+
+    TIMESTAMP=$(date +%s)
+    LOG="$LOG_DIR/hey-nothing-${TIMESTAMP}.log"
+
+    nohup "$DAEMON" --daemon </dev/null >"$LOG" 2>&1 &
+    BG_PID=$!
+    disown
+
+    # Wait a moment to verify it started
+    sleep 1
+    if kill -0 $BG_PID 2>/dev/null; then
+        echo "Hey Nothing daemon started (PID $BG_PID)"
+        echo "Log: $LOG"
+    else
+        echo "Failed to start daemon. Check log: $LOG"
+        return 1
+    fi
+}
+
+do_stop() {
+    if ! is_running; then
+        echo "Not running"
+        return 0
+    fi
+
+    PID=$(cat "$PID_FILE")
+    echo "Stopping daemon (PID $PID)..."
+    kill "$PID" 2>/dev/null
+
+    # Wait up to 5 seconds for clean shutdown
+    for i in 1 2 3 4 5; do
+        if ! kill -0 "$PID" 2>/dev/null; then
+            echo "Stopped."
+            rm -f "$PID_FILE"
+            return 0
+        fi
+        sleep 1
+    done
+
+    # Force kill
+    kill -9 "$PID" 2>/dev/null
+    rm -f "$PID_FILE"
+    echo "Force stopped."
+}
+
+do_status() {
+    if is_running; then
+        PID=$(cat "$PID_FILE")
+        echo "Running (PID $PID)"
+
+        if [ -f "$STATS_FILE" ]; then
+            . "$STATS_FILE"
+            NOW=$(date +%s)
+            UPTIME_S=$((NOW - started))
+            UPTIME_M=$((UPTIME_S / 60))
+            UPTIME_H=$((UPTIME_M / 60))
+            REMAIN_M=$((UPTIME_M % 60))
+
+            if [ "$UPTIME_H" -gt 0 ]; then
+                echo "Uptime: ${UPTIME_H}h ${REMAIN_M}m"
+            else
+                echo "Uptime: ${UPTIME_M}m"
+            fi
+            echo "Detections: $detections"
+            echo "Cycles: $cycles"
+
+            if [ "$last_cycle" -gt 0 ]; then
+                IDLE=$((NOW - last_cycle))
+                echo "Last cycle: ${IDLE}s ago"
+            fi
+        fi
+
+        # Show latest log
+        LATEST_LOG=$(ls -t "$LOG_DIR"/hey-nothing-*.log 2>/dev/null | head -1)
+        if [ -n "$LATEST_LOG" ]; then
+            echo "Latest log: $LATEST_LOG"
+            echo "--- last 5 lines ---"
+            tail -5 "$LATEST_LOG"
+        fi
+    else
+        echo "Not running"
+    fi
+}
+
+case "${1:-}" in
+    start)   do_start ;;
+    stop)    do_stop ;;
+    status)  do_status ;;
+    restart) do_stop; sleep 1; do_start ;;
+    *)
+        echo "Usage: hey-nothing-ctl {start|stop|status|restart}"
+        exit 1
+        ;;
+esac

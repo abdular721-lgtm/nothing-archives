@@ -1,0 +1,128 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Hey Nothing — wake word detection daemon (whisper polling)
+# Continuously records short clips, transcribes with whisper tiny.en,
+# and triggers ~/bin/voice when "hey nothing" is detected.
+#
+# Usage: hey-nothing              (run in foreground)
+#        hey-nothing --daemon      (internal: set by hey-nothing-ctl)
+#
+# Battery note: ~10s per cycle (2s record + 5s transcribe + 3s sleep).
+# Adjust POLL_INTERVAL below to trade responsiveness for battery.
+
+# No set -e — daemon must survive individual cycle failures
+
+# ─── Config ───────────────────────────────────────────────
+LISTEN_DURATION=2        # seconds to record each cycle
+POLL_INTERVAL=3          # seconds to sleep between cycles
+COOLDOWN=15              # seconds to wait after triggering voice router
+MAX_ERRORS=10            # consecutive errors before backing off
+ERROR_BACKOFF=30         # seconds to sleep after MAX_ERRORS consecutive failures
+PID_FILE="$HOME/.hey-nothing.pid"
+LOG_DIR="$HOME/logs"
+STATS_FILE="$HOME/.hey-nothing-stats"
+WAKE_PHRASES="hey nothing|a nothing|hey nah thing|hey nan thing|nothing phone|hey nasim"
+
+mkdir -p "$LOG_DIR"
+
+# ─── Signal handling ──────────────────────────────────────
+cleanup() {
+    echo "$(date '+%H:%M:%S') Daemon stopping (signal received)"
+    rm -f "$PID_FILE"
+    exit 0
+}
+trap cleanup SIGTERM SIGINT SIGHUP
+
+# ─── Write PID ────────────────────────────────────────────
+echo $$ > "$PID_FILE"
+
+# ─── Stats tracking ──────────────────────────────────────
+STARTED_AT=$(date +%s)
+DETECTIONS=0
+CYCLES=0
+
+save_stats() {
+    cat > "$STATS_FILE" <<STATS
+started=$STARTED_AT
+detections=$DETECTIONS
+cycles=$CYCLES
+last_cycle=$(date +%s)
+STATS
+}
+
+# ─── Acknowledgement sound ───────────────────────────────
+ack() {
+    # Short beep via TTS — fast feedback that wake word was heard
+    termux-tts-speak "Yes?" 2>/dev/null &
+    ACK_PID=$!
+    # Don't let TTS block the main flow for more than 3 seconds
+    ( sleep 3; kill $ACK_PID 2>/dev/null ) &
+    wait $ACK_PID 2>/dev/null || true
+}
+
+# ─── Main loop ────────────────────────────────────────────
+echo "$(date '+%H:%M:%S') Hey Nothing daemon started (PID $$)"
+echo "  Listen: ${LISTEN_DURATION}s | Poll interval: ${POLL_INTERVAL}s | Cooldown: ${COOLDOWN}s"
+echo "  Wake phrases: $WAKE_PHRASES"
+echo ""
+
+CONSECUTIVE_ERRORS=0
+
+while true; do
+    CYCLES=$((CYCLES + 1))
+
+    # Record and transcribe with tiny.en (fastest model)
+    HEARD=$( ~/bin/whisper-listen --fast "$LISTEN_DURATION" 2>/dev/null | tr -d '\r\n' ) || true
+    HEARD_LOWER=$(echo "$HEARD" | tr '[:upper:]' '[:lower:]')
+
+    # Strip whisper hallucination tags that leak through
+    HEARD_LOWER=$(echo "$HEARD_LOWER" | sed -E 's/\[([^]]*)\]//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Log first 5 cycles and then every 50th for debugging
+    if [ "$CYCLES" -le 5 ] || [ $((CYCLES % 50)) -eq 0 ]; then
+        echo "$(date '+%H:%M:%S') Cycle $CYCLES | heard: '${HEARD_LOWER:-(silence)}'"
+    fi
+
+    # Check for wake phrase
+    DETECTED=0
+    if [ -n "$HEARD_LOWER" ] && [ ${#HEARD_LOWER} -gt 1 ]; then
+        IFS='|' read -ra PHRASES <<< "$WAKE_PHRASES"
+        for phrase in "${PHRASES[@]}"; do
+            if [[ "$HEARD_LOWER" == *"$phrase"* ]]; then
+                DETECTED=1
+                break
+            fi
+        done
+        CONSECUTIVE_ERRORS=0  # got audio — reset error counter
+    else
+        # Empty result — could be silence or mic failure
+        CONSECUTIVE_ERRORS=$((CONSECUTIVE_ERRORS + 1))
+        if [ "$CONSECUTIVE_ERRORS" -ge "$MAX_ERRORS" ]; then
+            echo "$(date '+%H:%M:%S') WARNING: $CONSECUTIVE_ERRORS consecutive empty results — backing off ${ERROR_BACKOFF}s"
+            sleep "$ERROR_BACKOFF"
+            CONSECUTIVE_ERRORS=0
+        fi
+    fi
+
+    if [ "$DETECTED" -eq 1 ]; then
+        DETECTIONS=$((DETECTIONS + 1))
+        echo "$(date '+%H:%M:%S') WAKE WORD detected in: '$HEARD' (detection #$DETECTIONS)"
+        save_stats
+
+        # Acknowledge
+        ack
+
+        # Run the voice router (blocking — waits for command to complete)
+        echo "$(date '+%H:%M:%S') Launching voice router..."
+        ~/bin/voice 2>&1 || true
+        echo "$(date '+%H:%M:%S') Voice router finished. Cooldown ${COOLDOWN}s..."
+
+        # Cooldown — avoid retriggering on tail-end audio
+        sleep "$COOLDOWN"
+    else
+        # Periodic stats save every 50 cycles
+        if [ $((CYCLES % 50)) -eq 0 ]; then
+            save_stats
+        fi
+        sleep "$POLL_INTERVAL"
+    fi
+done

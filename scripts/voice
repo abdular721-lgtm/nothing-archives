@@ -2,10 +2,22 @@
 # Unified voice router — listen once, route to the right sub-script
 # Usage: voice (listens for 5 seconds then routes)
 
+if [ "$1" = "--help" ]; then
+    MSG="Voice router: listen once and route to alarm, music, toggle, macro, calendar, weather, SMS, WhatsApp, notes, reminders, info, briefing, call, screenshot, YouTube, or notifications."
+    echo "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null
+    exit 0
+fi
+
 set -e
 
 echo "🎤 Listening..."
 TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+
+if [ -z "$TEXT" ]; then
+    echo "⚠️  Nothing heard — retrying..."
+    TEXT=$(~/bin/whisper-listen 5 | tr -d '\r\n')
+fi
 
 if [ -z "$TEXT" ]; then
     echo "❌ Nothing heard"
@@ -22,6 +34,11 @@ T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
 if [[ "$T" == *"goodnight"* || "$T" == *"good night"* || "$T" == *"sleep"* || "$T" == *"bedtime"* || "$T" == *"good morning"* || "$T" == *"commute"* || "$T" == *"going out"* || "$T" == *"leaving"* || "$T" == *"focus mode"* || "$T" == *"study mode"* || "$T" == *"work mode"* || "$T" == *"presentation"* || "$T" == *"meeting mode"* || "$T" == *"screen share"* || "$T" == *"normal mode"* || "$T" == *"reset mode"* || "$T" == *"cancel mode"* || "$T" == *"back to normal"* ]]; then
     echo "→ voice-macro"
     exec ~/bin/voice-macro "$TEXT"
+
+# ─── Daily briefing ──────────────────────────────────────
+elif [[ "$T" == *"briefing"* || "$T" == *"what did i miss"* || "$T" == *"what did I miss"* || "$T" == *"morning report"* || "$T" == *"daily report"* ]]; then
+    echo "→ voice-briefing"
+    exec ~/bin/voice-briefing "$TEXT"
 
 # ─── Phone calls ─────────���────────────────────────────────
 elif [[ "$T" == *"call "* || "$T" == *"phone "* || "$T" == *"ring "* || "$T" == *"dial "* || "$T" == *"hang up"* || "$T" == *"end call"* ]]; then
@@ -58,9 +75,14 @@ elif [[ "$T" == *"alarm"* || "$T" == *"wake me"* || "$T" == *"set alarm"* ]]; th
     echo "→ voice-alarm"
     exec ~/bin/voice-alarm "$TEXT"
 
-elif [[ "$T" == *"youtube"* || "$T" == *"play"* && "$T" == *"video"* ]]; then
+elif [[ "$T" == *"youtube"* || ( "$T" == *"play"* && "$T" == *"video"* ) ]]; then
     echo "→ voice-youtube"
     exec ~/bin/voice-youtube "$TEXT"
+
+# ─── Music control ────────────────────────────────────────
+elif [[ "$T" == *"pause"* || "$T" == *"resume"* || "$T" == *"next song"* || "$T" == *"skip"* || "$T" == *"previous"* || "$T" == *"now playing"* || "$T" == *"what's playing"* || "$T" == *"what is playing"* || "$T" == *"current song"* ]] || [[ "$T" == *"play "* && "$T" != *"video"* ]] || [[ "$T" == *"put on "* || "$T" == *"listen to "* || "$T" == *"stop music"* || "$T" == *"stop playing"* ]]; then
+    echo "→ voice-music"
+    exec ~/bin/voice-music "$TEXT"
 
 elif [[ "$T" == *"open"* || "$T" == *"launch"* || "$T" == *"start"* ]]; then
     echo "→ voice-open"

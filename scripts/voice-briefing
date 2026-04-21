@@ -1,0 +1,216 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Daily briefing — spoken summary of everything important
+# Usage: voice-briefing                    (full briefing)
+#        voice-briefing "short briefing"   (time + weather + calendar only)
+#
+# Sections: greeting, time/date, battery, weather, calendar, reminders,
+#           unread notifications, latest WhatsApp, closing.
+
+if [ -n "$1" ]; then
+    TEXT="$1"
+else
+    TEXT="full"
+fi
+
+T=$(echo "$TEXT" | tr '[:upper:]' '[:lower:]')
+
+# Short mode: --short flag or "short/quick briefing"
+SHORT=0
+if [[ "$T" == *"short"* || "$T" == *"quick"* || "$T" == *"brief"* ]]; then
+    SHORT=1
+fi
+
+SPEECH=""
+
+add() {
+    echo "  $1"
+    SPEECH="${SPEECH} $1"
+}
+
+# ─── 1. GREETING ─────────────────────────────────────────
+HOUR=$(date +%H)
+if [ "$HOUR" -lt 12 ]; then
+    GREETING="Good morning"
+elif [ "$HOUR" -lt 17 ]; then
+    GREETING="Good afternoon"
+else
+    GREETING="Good evening"
+fi
+add "$GREETING, Abdul."
+
+# ─── 2. TIME AND DATE ────────────────────────────────────
+DAY_NAME=$(date '+%A')
+MONTH_DAY=$(date '+%B %d')
+CURRENT_TIME=$(date '+%I:%M %p' | sed 's/^0//')
+add "It's $CURRENT_TIME on $DAY_NAME, $MONTH_DAY."
+
+# ─── 3. BATTERY ──────────────────────────────────────────
+BATTERY=$(su shell -c 'cat /sys/class/power_supply/battery/capacity' 2>/dev/null || echo "unknown")
+CHARGING=$(su shell -c 'cat /sys/class/power_supply/battery/status' 2>/dev/null || echo "unknown")
+if [ "$CHARGING" = "Charging" ]; then
+    add "Battery is at ${BATTERY}% and charging."
+elif [ "$BATTERY" != "unknown" ]; then
+    if [ "$BATTERY" -le 20 ]; then
+        add "Battery is low at ${BATTERY}%."
+    else
+        add "Battery is at ${BATTERY}%."
+    fi
+fi
+
+# ─── 4. WEATHER ──────────────────────────────────────────
+WEATHER=$(python3 -c "
+import json, urllib.request, os
+
+api_key = os.environ.get('OPENWEATHER_API_KEY', '')
+if not api_key:
+    # Try reading from file
+    try:
+        with open(os.path.expanduser('~/.openweather_key')) as f:
+            api_key = f.read().strip()
+    except:
+        pass
+
+if api_key:
+    try:
+        url = f'https://api.openweathermap.org/data/2.5/weather?q=Dublin,IE&units=metric&appid={api_key}'
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read())
+        temp = round(data['main']['temp'])
+        desc = data['weather'][0]['description']
+        print(f'Weather in Dublin: {temp} degrees, {desc}.')
+    except:
+        print('')
+else:
+    print('')
+" 2>/dev/null)
+
+if [ -n "$WEATHER" ]; then
+    add "$WEATHER"
+fi
+
+# ─── 5. CALENDAR (today's events) ────────────────────────
+EVENTS=$(su shell -c "content query --uri content://com.android.calendar/events --projection title:dtstart:dtend:allDay --sort 'dtstart ASC'" 2>/dev/null | python3 -c "
+import sys
+from datetime import datetime, timedelta
+
+now = datetime.now()
+day_start = now.replace(hour=0, minute=0, second=0)
+day_end = day_start + timedelta(days=1)
+start_ms = int(day_start.timestamp() * 1000)
+end_ms = int(day_end.timestamp() * 1000)
+
+events = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith('Row:'):
+        continue
+    parts = {}
+    for field in line.split(', '):
+        if '=' in field:
+            k, v = field.split('=', 1)
+            k = k.strip().split()[-1]
+            parts[k] = v
+    dtstart = int(parts.get('dtstart', 0))
+    title = parts.get('title', 'Untitled')
+    all_day = parts.get('allDay', '0')
+
+    if start_ms <= dtstart < end_ms:
+        dt = datetime.fromtimestamp(dtstart / 1000)
+        if all_day == '1':
+            events.append(f'{title} all day')
+        else:
+            t = dt.strftime('%I:%M %p').lstrip('0')
+            events.append(f'{title} at {t}')
+
+if not events:
+    print('Your schedule is clear today.')
+elif len(events) == 1:
+    print(f'You have 1 event today: {events[0]}.')
+else:
+    items = ', '.join(events[:5])
+    print(f'You have {len(events)} events today: {items}.')
+" 2>/dev/null)
+
+if [ -n "$EVENTS" ]; then
+    add "$EVENTS"
+fi
+
+# ─── SHORT MODE ENDS HERE ────────────────────────────────
+if [ "$SHORT" -eq 1 ]; then
+    add "That's your quick briefing."
+    termux-tts-speak "$SPEECH" 2>/dev/null
+    exit 0
+fi
+
+# ─── 6. REMINDERS ────────────────────────────────────────
+REMINDERS=$(python3 -c "
+import json, time
+from pathlib import Path
+
+path = Path.home() / 'notes' / 'reminders.json'
+try:
+    with open(path) as f:
+        reminders = json.load(f)
+    now = int(time.time())
+    active = [r for r in reminders if r.get('fire_epoch', 0) > now]
+    if active:
+        print(f'You have {len(active)} active reminder{\"s\" if len(active) != 1 else \"\"}.')
+except:
+    pass
+" 2>/dev/null)
+
+if [ -n "$REMINDERS" ]; then
+    add "$REMINDERS"
+fi
+
+# ─── 7. UNREAD NOTIFICATIONS ─────────────────────────────
+NOTIF_COUNT=$(termux-notification-list 2>/dev/null | python3 -c "
+import json, sys
+try:
+    notifs = json.load(sys.stdin)
+    # Filter out system/low-priority notifications
+    important = [n for n in notifs if n.get('packageName', '') not in
+                 ('com.termux', 'android', 'com.android.systemui')]
+    if important:
+        print(f'You have {len(important)} unread notification{\"s\" if len(important) != 1 else \"\"}.')
+except:
+    pass
+" 2>/dev/null)
+
+if [ -n "$NOTIF_COUNT" ]; then
+    add "$NOTIF_COUNT"
+fi
+
+# ─── 8. LATEST WHATSAPP ──────────────────────────────────
+WA_MSG=$(termux-notification-list 2>/dev/null | python3 -c "
+import json, sys
+try:
+    notifs = json.load(sys.stdin)
+    wa = [n for n in notifs if n.get('packageName') == 'com.whatsapp']
+    wa.sort(key=lambda n: n.get('id', 0), reverse=True)
+    for n in wa:
+        title = n.get('title', '')
+        content = n.get('content', '')
+        if title and content and 'messages' not in content.lower():
+            msg = content[:80] if len(content) > 80 else content
+            print(f'Latest WhatsApp from {title}: {msg}.')
+            break
+except:
+    pass
+" 2>/dev/null)
+
+if [ -n "$WA_MSG" ]; then
+    add "$WA_MSG"
+fi
+
+# ─── 9. CLOSING ──────────────────────────────────────────
+if [ "$HOUR" -lt 12 ]; then
+    add "That's your briefing. Have a great morning."
+elif [ "$HOUR" -lt 17 ]; then
+    add "That's your briefing. Have a great afternoon."
+else
+    add "That's your briefing. Have a great evening."
+fi
+
+# Speak everything in one shot
+termux-tts-speak "$SPEECH" 2>/dev/null

@@ -81,7 +81,7 @@ ffmpeg -y -i "$RAW" -ar 16000 -ac 1 -c:a pcm_s16le "$WAV" > /dev/null 2>&1
 START_S=$SECONDS
 "$WHISPER" -m "$MODEL" -f "$WAV" --no-timestamps --no-prints 2>/dev/null \
     | tr -d "\r" \
-    | sed -E 's/\[(inaudible|BLANK_AUDIO|MUSIC|SILENCE|speaking[^]]*)\]//gi' \
+    | sed -E 's/\[[^]]*\b(inaudible|BLANK_AUDIO|MUSIC|SILENCE|speaking|PLAYING|NOISE|APPLAUSE|LAUGHTER)\b[^]]*\]//gi' \
     | sed -E 's/\([^)]+\)//g' \
     | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' \
     | tr -s ' '

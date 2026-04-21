@@ -1,8 +1,14 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-activated macros — multi-step action sequences
 # Macros: goodnight, good morning, commute, focus, presentation, normal mode
+if [ "$1" = "--help" ]; then
+    MSG="Voice macro: say goodnight, good morning, commute, focus mode, presentation mode, or normal mode to run multi-step sequences."
+    echo "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null
+    exit 0
+fi
 
-set -e
+
 
 # Accept pre-captured text as $1 (from voice router) or listen fresh
 if [ -n "$1" ]; then

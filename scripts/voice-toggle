@@ -3,7 +3,13 @@
 # Targets: wifi, bluetooth, data, airplane, flashlight, volume, brightness, DND, dark mode
 # All Android framework commands use "su shell -c" to avoid Failed transaction on Nothing OS
 
-set -e
+if [ "$1" = "--help" ]; then
+    MSG="Voice toggle: control wifi, bluetooth, mobile data, airplane mode, flashlight, volume, brightness, do not disturb, or dark mode. Say on, off, or just the name to toggle."
+    echo "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null
+    exit 0
+fi
+
 
 # Accept pre-captured text as $1 (from voice router) or listen fresh
 if [ -n "$1" ]; then

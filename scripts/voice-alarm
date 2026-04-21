@@ -1,5 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Voice-controlled alarm setter (Whisper backend)
+if [ "$1" = "--help" ]; then
+    MSG="Voice alarm: say a time like 7am, 6:30 PM, or wake me at 8. Supports up to 3 retries."
+    echo "$MSG"
+    termux-tts-speak "$MSG" 2>/dev/null
+    exit 0
+fi
 
 set -e
 
