@@ -3,7 +3,8 @@
 # Usage: hey-nothing-ctl start|stop|status|restart
 
 PID_FILE="$HOME/.hey-nothing.pid"
-STATS_FILE="$HOME/.hey-nothing-stats"
+STATS_FILE="$HOME/.hey-nothing-stats.json"
+CONFIG_FILE="$HOME/.hey-nothing-config"
 DAEMON="$HOME/bin/hey-nothing"
 LOG_DIR="$HOME/logs"
 
@@ -31,17 +32,18 @@ do_start() {
     TIMESTAMP=$(date +%s)
     LOG="$LOG_DIR/hey-nothing-${TIMESTAMP}.log"
 
-    nohup "$DAEMON" --daemon </dev/null >"$LOG" 2>&1 &
+    nohup "$DAEMON" </dev/null >"$LOG" 2>&1 &
     BG_PID=$!
     disown
 
     # Wait a moment to verify it started
-    sleep 1
+    sleep 2
     if kill -0 $BG_PID 2>/dev/null; then
         echo "Hey Nothing daemon started (PID $BG_PID)"
         echo "Log: $LOG"
     else
         echo "Failed to start daemon. Check log: $LOG"
+        cat "$LOG" 2>/dev/null
         return 1
     fi
 }
@@ -73,44 +75,70 @@ do_stop() {
 }
 
 do_status() {
+    echo "=== Hey Nothing Wake Word Daemon ==="
+    echo "Method: openWakeWord (hey_jarvis model)"
+    echo ""
+
     if is_running; then
         PID=$(cat "$PID_FILE")
-        echo "Running (PID $PID)"
+        echo "Status: Running (PID $PID)"
 
+        # Read JSON stats
         if [ -f "$STATS_FILE" ]; then
-            . "$STATS_FILE"
-            NOW=$(date +%s)
-            UPTIME_S=$((NOW - started))
-            UPTIME_M=$((UPTIME_S / 60))
-            UPTIME_H=$((UPTIME_M / 60))
-            REMAIN_M=$((UPTIME_M % 60))
-
-            if [ "$UPTIME_H" -gt 0 ]; then
-                echo "Uptime: ${UPTIME_H}h ${REMAIN_M}m"
-            else
-                echo "Uptime: ${UPTIME_M}m"
-            fi
-            echo "Detections: $detections"
-            echo "Cycles: $cycles"
-            echo "Skipped (ambient): ${skipped_ambient:-0}"
-            echo "Skipped (energy): ${skipped_energy:-0}"
-            echo "Empty (silence): ${empty_cycles:-0}"
-
-            if [ "$last_cycle" -gt 0 ]; then
-                IDLE=$((NOW - last_cycle))
-                echo "Last cycle: ${IDLE}s ago"
-            fi
+            # Parse JSON with python3 (always available on Termux)
+            python3 -c "
+import json, time
+try:
+    stats = json.load(open('$STATS_FILE'))
+    now = time.time()
+    uptime_s = int(now - stats.get('start_time', now))
+    h, rem = divmod(uptime_s, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        print(f'Uptime: {h}h {m}m')
+    elif m > 0:
+        print(f'Uptime: {m}m {s}s')
+    else:
+        print(f'Uptime: {s}s')
+    print(f'Triggers: {stats.get(\"triggers\", 0)}')
+    print(f'Cycles: {stats.get(\"cycles\", 0)}')
+    cycles = stats.get('cycles', 0)
+    if cycles > 0:
+        rate = cycles / max(uptime_s, 1)
+        print(f'Rate: {rate:.1f} cycles/sec')
+except Exception as e:
+    print(f'Stats error: {e}')
+" 2>/dev/null
         fi
 
-        # Show latest log
+        # Show config
+        echo ""
+        echo "Config:"
+        if [ -f "$CONFIG_FILE" ]; then
+            # Extract key settings
+            THRESHOLD=$(grep -E '^THRESHOLD=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | cut -d'#' -f1 | tr -d ' ')
+            COOLDOWN=$(grep -E '^COOLDOWN=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | cut -d'#' -f1 | tr -d ' ')
+            CONSECUTIVE=$(grep -E '^REQUIRED_CONSECUTIVE=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | cut -d'#' -f1 | tr -d ' ')
+            QS=$(grep -E '^QUIET_HOURS_START=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | cut -d'#' -f1 | tr -d ' ')
+            QE=$(grep -E '^QUIET_HOURS_END=' "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2 | cut -d'#' -f1 | tr -d ' ')
+            echo "  Threshold: ${THRESHOLD:-0.5}"
+            echo "  Cooldown: ${COOLDOWN:-5}s"
+            echo "  Required consecutive: ${CONSECUTIVE:-2}"
+            echo "  Quiet hours: ${QS:-0}:00-${QE:-6}:00"
+        else
+            echo "  (defaults — no config file)"
+        fi
+
+        # Show latest log tail
+        echo ""
         LATEST_LOG=$(ls -t "$LOG_DIR"/hey-nothing-*.log 2>/dev/null | head -1)
         if [ -n "$LATEST_LOG" ]; then
-            echo "Latest log: $LATEST_LOG"
+            echo "Log: $LATEST_LOG"
             echo "--- last 5 lines ---"
             tail -5 "$LATEST_LOG"
         fi
     else
-        echo "Not running"
+        echo "Status: Not running"
     fi
 }
 

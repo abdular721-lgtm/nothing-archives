@@ -18,8 +18,8 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 ```
 
 - **Single entry point**: `~/bin/voice` (unified router)
-- **STT engine**: `~/bin/whisper-listen` (whisper.cpp: tiny.en for wake word, base.en default for commands, small.en via --accurate for dictation)
-- **Wake word**: `~/bin/hey-nothing` (whisper polling daemon, ~7.5s cycle)
+- **STT engine**: `~/bin/whisper-listen` (whisper.cpp: tiny.en via --fast, base.en default for commands, small.en via --accurate for dictation)
+- **Wake word**: `~/bin/hey-nothing` (openWakeWord daemon, hey_jarvis model, <1s latency)
 - **Daemon control**: `~/bin/hey-nothing-ctl` (start/stop/status/restart)
 - **TTS**: `termux-tts-speak` (synchronous, use `say()` helper)
 - **Detached execution**: `~/bin/run-voice` (avoids OOM on SSH sessions)
@@ -37,7 +37,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 - `termux-speech-to-text` → unreliable, use `whisper-listen` instead
 - `termux-microphone-record -e wav` → lies, actually outputs MP4. ffmpeg conversion mandatory.
 - TTS over SSH → causes OOM kill on sshd. **Always use `run-voice` for testing.**
-- `openWakeWord` / `pvporcupine` / `precise-runner` → all fail on Android bionic libc
+- `pvporcupine` / `precise-runner` → fail on Android bionic libc. openWakeWord works (installed via `pip install openwakeword --no-deps` + `pkg install python-onnxruntime python-scipy portaudio`)
 - `sed -i` multi-line insert on Termux → collapses to single line. Use Python for multi-line edits.
 - `/tmp` writes → permission denied. Use `~/` or `$HOME/.cache/`.
 - `set -e` in long-running scripts → kills daemon on any non-zero sub-command. Never use in daemons.
@@ -55,7 +55,7 @@ User speaks → whisper-listen (whisper.cpp, offline STT)
 ### Wake word
 | Script | Description |
 |--------|-------------|
-| `hey-nothing` | Wake word daemon — whisper polling with energy gating, screen-aware polling, quiet hours |
+| `hey-nothing` | Wake word daemon — openWakeWord (hey_jarvis model), continuous inference, <1s latency, quiet hours. Python script. |
 | `hey-nothing-ctl` | Daemon lifecycle: start, stop, status, restart |
 
 ### Action scripts
@@ -135,8 +135,8 @@ termux-torch on|off
 ~/.cache/                     — temporary audio files
 ~/.voice-context.json         — conversation context (10min TTL)
 ~/.hey-nothing.pid            — daemon PID file
-~/.hey-nothing-stats          — daemon statistics
-~/.hey-nothing-config         — wake word daemon tuning
+~/.hey-nothing-stats.json     — daemon statistics (JSON: cycles, triggers, start_time)
+~/.hey-nothing-config         — wake word daemon tuning (threshold, cooldown, quiet hours)
 ~/.smart-home-config          — Home Assistant / n8n endpoints
 ~/.shortcuts/                 — Termux:Widget symlinks
 ~/.termux/boot/               — Termux:Boot startup scripts
@@ -174,9 +174,9 @@ ssh nothing "cd ~/projects/nothing-archives && git add . && git commit -m 'messa
 
 4. **sed multi-line on Termux**: `sed -i` with newlines collapses everything to one line. Use Python for multi-line file edits.
 
-5. **Wake word latency**: Cycle time ~7.5s (limited by whisper tiny.en ~2.9s transcription on Dimensity 7200 Pro). All neural wake word engines fail on Termux/bionic.
+5. **Wake word latency**: <1s with openWakeWord (continuous inference on 80ms audio chunks). Trigger phrase: "Hey Jarvis". Old whisper polling was ~7.5s cycle time.
 
-6. **Battery drain**: Estimated ~2.2%/hr weighted average with all optimizations (energy gating + screen-aware polling + quiet hours). Configurable via `~/.hey-nothing-config`.
+6. **Wake word resources**: openWakeWord daemon uses ~8% CPU steady, 162MB RAM. Estimated <1%/hr battery (vs ~2.2%/hr with whisper polling). Configurable via `~/.hey-nothing-config`.
 
 7. **SSH connection refused after OOM**: Wait a few seconds, sshd restarts automatically.
 
