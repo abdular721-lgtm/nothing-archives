@@ -41,7 +41,7 @@ fi
 # --- Step 2: Content ---
 echo ""
 echo "🎤 Speak the NOTE CONTENT (60 seconds — pauses OK with Whisper)"
-CONTENT=$(whisper-listen 60)
+CONTENT=$(whisper-listen --accurate 60)
 
 if [ -z "$CONTENT" ]; then
     echo "❌ No content captured"
