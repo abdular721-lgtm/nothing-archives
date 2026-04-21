@@ -28,7 +28,7 @@ STATS_FILE = HOME / '.hey-nothing-stats.json'
 
 # ─── Config defaults ─────────────────────────────────────
 config = {
-    'THRESHOLD': 0.5,
+    'THRESHOLD': 0.3,
     'COOLDOWN': 5,
     'REQUIRED_CONSECUTIVE': 2,
     'QUIET_HOURS_START': 0,
@@ -234,30 +234,20 @@ try:
 
                 # Launch voice router via run-voice (prevents OOM on SSH)
                 log("Launching voice router...")
-                try:
-                    result = subprocess.run(
-                        [str(HOME / 'bin' / 'run-voice'), config['VOICE_CMD']],
-                        timeout=60,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
-                    log(f"Voice router finished (exit={result.returncode}). Cooldown {config['COOLDOWN']}s...")
-                except subprocess.TimeoutExpired:
-                    log("Voice router timed out (60s). Resuming listening.")
-                except Exception as e:
-                    log(f"Voice router error: {e}")
+                subprocess.Popen(
+                    [os.path.expanduser('~/bin/run-voice'), os.path.expanduser('~/bin/voice')],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
 
-                # Cooldown — avoid retriggering on tail-end audio
-                time.sleep(config['COOLDOWN'])
-
-                # Reset model state after cooldown to clear any buffered predictions
+                # Reset model state to clear buffered predictions from trigger audio
                 model.reset()
         else:
             if consecutive > 0:
                 consecutive = 0
 
-        # Save stats every 5000 cycles (~6.7 minutes)
-        if stats['cycles'] % 5000 == 0:
+        # Save stats every 1000 cycles (~80 seconds)
+        if stats['cycles'] % 1000 == 0:
             save_stats(stats)
             log(f"Stats: {stats['cycles']} cycles, {stats['triggers']} triggers, "
                 f"uptime {int(time.time() - stats['start_time'])}s")
